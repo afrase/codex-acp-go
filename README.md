@@ -147,8 +147,8 @@ func main() {
 | Config options | Mode, collaboration mode (Default, Plan), model, and reasoning effort for a model that has levels. |
 | Turn output | Text and thoughts, streamed. Codex's to-do plan as a plan. Usage and the context window. The session's title. Codex's warnings, as text. |
 | Tool calls | Commands, with their output streamed (`_meta.terminal_output_delta`, `_meta.terminal_exit`). File edits, as diffs. MCP tool calls. Web search. Image views. Compaction. Subagent calls, as plain calls. |
-| Permissions | Every approval Codex asks for goes to the client: commands (with Codex's own choices, such as "don't ask again" for a command prefix), file edits, and MCP tool approvals. The agent never allows anything itself. |
-| Questions | A plan-mode question (`request_user_input`) as a form, each answer with an optional note, if the client takes form elicitation. An MCP server's form too. |
+| Permissions | Every approval Codex asks for in an open session goes to the client: commands (with Codex's own choices, such as "don't ask again" for a command prefix), file edits, and MCP tool approvals. A subagent's approvals go to the session whose turn started it, as codex-acp sends them. The agent never allows anything itself. |
+| Questions | A plan-mode question (`request_user_input`) as a form, each answer with an optional note, if the client takes form elicitation. An MCP server's form too. A subagent's, in the session whose turn started it. |
 | Commands | Codex's skills, offered as `$name` commands. |
 | MCP | MCP servers from the client (stdio, HTTP), added to the thread's config. |
 
@@ -158,8 +158,11 @@ Not yet:
   `/review-branch`, `/review-commit`, `/status`, `/mcp`, `/skills`,
   `/goal`, `/rename`, `/logout`.
 - **The fast-mode option** (Codex's service tier).
-- **Subagents as sessions of their own.** A subagent shows as a plain tool
-  call.
+- **Subagents as sessions of their own.** Starting a subagent shows as a
+  plain tool call; the subagent's own messages and tool calls aren't
+  shown. A subagent that a session's earlier run started, before the
+  session was loaded or resumed here, isn't known to it, so its approvals
+  are refused.
 - **Background terminals.** A command Codex leaves running shows as
   running until it ends; nothing stops it from the client.
 - **Rate limits**, and the AI-generated title Codex can make.

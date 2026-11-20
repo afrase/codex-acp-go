@@ -108,6 +108,7 @@ func (a *agent) forget(s *session) {
 	a.mu.Lock()
 	if a.sessions[s.id] == s {
 		delete(a.sessions, s.id)
+		a.forgetChildren(s.id)
 	}
 	a.mu.Unlock()
 }

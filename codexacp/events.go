@@ -47,6 +47,7 @@ func (s *session) notified(method string, params json.RawMessage) {
 		if !ok {
 			return
 		}
+		s.a.discover(s.id, s.id, it)
 		if method == "item/started" && it.Type != "userMessage" {
 			s.modelOutput()
 		}
@@ -71,6 +72,27 @@ func (s *session) notified(method string, params json.RawMessage) {
 	case "warning", "configWarning", "model/rerouted":
 		s.unthreaded(method, params)
 	}
+}
+
+// childNotified takes a notification of one of the session's subagents'
+// threads, as codex-acp takes it for a client that doesn't take subagent
+// sessions: nothing is shown, but its items are noted for the approvals
+// it asks for, which come to this session, and for the subagents it
+// spawns in turn.
+func (s *session) childNotified(thread, method string, params json.RawMessage) {
+	if method != "item/started" && method != "item/completed" {
+		return
+	}
+	var n appserver.ItemNotification
+	if !s.decode(method, params, &n) {
+		return
+	}
+	it, ok := s.item(method, n.Item)
+	if !ok {
+		return
+	}
+	s.a.discover(s.id, thread, it)
+	s.tools.observe(method == "item/started", it)
 }
 
 // text takes a piece of the agent's message or of its reasoning; a new

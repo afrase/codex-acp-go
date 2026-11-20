@@ -125,6 +125,7 @@ func (a *agent) CloseSession(ctx context.Context, req *acp.CloseSessionRequest) 
 	}
 	a.mu.Lock()
 	delete(a.sessions, s.id)
+	a.forgetChildren(s.id)
 	a.mu.Unlock()
 	// A turn still running is interrupted first: once unsubscribed, the
 	// thread would go on working with no one to hear it.

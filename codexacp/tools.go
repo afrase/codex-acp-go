@@ -71,6 +71,34 @@ func (t *tools) pendingMCP(server string) string {
 	return ids[0]
 }
 
+// observe notes a subagent's item that an approval may name: a
+// command's source, a change's files, a running MCP call.
+func (t *tools) observe(started bool, it appserver.Item) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.init()
+	switch it.Type {
+	case "commandExecution":
+		if started {
+			t.sources[it.ID] = it.Source
+		} else {
+			delete(t.sources, it.ID)
+		}
+	case "fileChange":
+		if started {
+			t.changes[it.ID] = it
+		} else {
+			delete(t.changes, it.ID)
+		}
+	case "mcpToolCall":
+		if started {
+			t.mcp[it.Server] = append(t.mcp[it.Server], it.ID)
+		} else {
+			t.mcp[it.Server] = slices.DeleteFunc(t.mcp[it.Server], func(id string) bool { return id == it.ID })
+		}
+	}
+}
+
 // item is the updates an item's start or end makes.
 func (t *tools) item(started bool, it appserver.Item) []acp.SessionUpdate {
 	t.mu.Lock()

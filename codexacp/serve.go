@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -49,6 +50,10 @@ type agent struct {
 	forms    bool // the client answers form elicitations
 	stopping bool // stop has begun: the app-server's exit is the agent's doing
 	sessions map[string]*session
+	// children is the session each subagent's thread works for, by the
+	// thread's id: the root session whose turn spawned it, or spawned
+	// the subagent that did.
+	children map[string]string
 }
 
 // Serve runs the agent on r and w, the client's streams, until the client
@@ -57,7 +62,7 @@ type agent struct {
 // It returns nil once the client has gone, ctx's error when ctx ended
 // first, and otherwise what broke the connection.
 func Serve(ctx context.Context, r io.Reader, w io.Writer, cfg Config) error {
-	a := &agent{cfg: cfg, log: cfg.Log, grace: interruptGrace, sessions: map[string]*session{}}
+	a := &agent{cfg: cfg, log: cfg.Log, grace: interruptGrace, sessions: map[string]*session{}, children: map[string]string{}}
 	if a.log == nil {
 		a.log = slog.New(slog.DiscardHandler)
 	}
@@ -251,6 +256,7 @@ func (r router) Notified(method string, params json.RawMessage) {
 	tid := r.thread(method, params)
 	r.a.mu.Lock()
 	s := r.a.sessions[tid]
+	root := r.a.rootOf(tid)
 	var all []*session
 	if tid == "" {
 		for _, s := range r.a.sessions {
@@ -261,6 +267,8 @@ func (r router) Notified(method string, params json.RawMessage) {
 	switch {
 	case s != nil:
 		s.notified(method, params)
+	case root != nil:
+		root.childNotified(tid, method, params)
 	case tid == "":
 		for _, s := range all { // a warning of no thread: the sessions with a turn running
 			s.unthreaded(method, params)
@@ -269,13 +277,69 @@ func (r router) Notified(method string, params json.RawMessage) {
 }
 
 func (r router) Asked(ctx context.Context, method string, params json.RawMessage) (any, error) {
+	tid := r.thread(method, params)
 	r.a.mu.Lock()
-	s := r.a.sessions[r.thread(method, params)]
+	s := r.a.sessions[tid]
+	if s == nil {
+		s = r.a.rootOf(tid) // a subagent's request goes to its root session
+	}
 	r.a.mu.Unlock()
 	if s == nil {
 		return refusal(method), nil
 	}
 	return s.asked(ctx, method, params)
+}
+
+// rootOf is the open session a subagent's thread works for, or nil; a.mu
+// is held.
+func (a *agent) rootOf(thread string) *session {
+	if thread == "" || a.sessions[thread] != nil {
+		return nil
+	}
+	if root, ok := a.children[thread]; ok {
+		return a.sessions[root]
+	}
+	return nil
+}
+
+// discover notes the subagent threads an item of thread (the root
+// session's or one of its subagents') starts, as codex-acp discovers
+// them: a spawnAgent call's receivers, and the thread of a subagent's
+// activity other than an interrupt, the root agent's own excepted.
+func (a *agent) discover(root, thread string, it appserver.Item) {
+	var ids []string
+	switch {
+	case it.Type == "collabAgentToolCall" && it.Tool == "spawnAgent":
+		ids = it.ReceiverThreadIDs
+	case it.Type == "subAgentActivity" && it.Kind != "interrupted" && !rootAgentPath(it.AgentPath):
+		ids = []string{it.AgentThreadID}
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, id := range ids {
+		if strings.TrimSpace(id) == "" || id == root || id == thread {
+			continue
+		}
+		if _, known := a.children[id]; !known {
+			a.children[id] = root
+		}
+	}
+}
+
+// rootAgentPath says a subagent's path is the root agent's.
+func rootAgentPath(p string) bool {
+	p = strings.TrimRight(strings.TrimSpace(p), "/")
+	return p == "" || p == "/root" || p == "root"
+}
+
+// forgetChildren lets go of the subagent threads of root, a session
+// closed; a.mu is held.
+func (a *agent) forgetChildren(root string) {
+	for child, r := range a.children {
+		if r == root {
+			delete(a.children, child)
+		}
+	}
 }
 
 // refusal is the answer to a request of a thread with no session, as
