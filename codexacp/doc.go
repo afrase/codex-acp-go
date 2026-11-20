@@ -4,8 +4,8 @@
 // through the appserver package) on the other. It needs no Node: it is a
 // Go replacement for codex-acp, the Node agent ACP clients run today.
 //
-// It is unofficial and not affiliated with OpenAI, and it contains no
-// authentication code: Codex signs in as it always does.
+// It is unofficial and not affiliated with OpenAI. It keeps no
+// credentials: signing in is Codex's own.
 //
 // # Compatibility
 //
@@ -28,6 +28,22 @@
 // it, and a message steered into a running turn joins it. Every approval
 // Codex asks for goes to the client; the agent never allows anything
 // itself.
+//
+// # Signing in
+//
+// Without a login its provider needs, Codex can't open a session: the
+// client hears Authentication required. As codex-acp does, initialize
+// names two auth methods, and the client's authenticate has Codex sign in
+// by one:
+//
+//   - "api-key": the request's _meta["api-key"].apiKey, else
+//     $CODEX_API_KEY, else $OPENAI_API_KEY (of Config.Env, or this
+//     process's environment), given to Codex.
+//   - "chat-gpt", unless $NO_BROWSER is set: Codex starts a ChatGPT
+//     login and the agent opens its page in the user's browser
+//     (Config.OpenURL), then answers once the user has finished there. A
+//     client that cancels the request cancels the login; a second
+//     authenticate ends the first.
 //
 // # Trust
 //

@@ -100,6 +100,9 @@ type harness struct {
 	done  chan error
 	close func()
 	logs  *logBuffer
+	// opened is each page the agent opened in a browser: a test's never
+	// reach a real one.
+	opened chan string
 }
 
 // logBuffer is the agent's log, as text.
@@ -120,14 +123,20 @@ func (b *logBuffer) String() string {
 	return b.buf.String()
 }
 
-func start(t *testing.T, fake *appservertest.Fake) *harness {
+// start serves the agent on fake, its Config changed by each of with.
+func start(t *testing.T, fake *appservertest.Fake, with ...func(*Config)) *harness {
 	t.Helper()
 	toAgentR, toAgentW := io.Pipe()
 	fromAgentR, fromAgentW := io.Pipe()
-	h := &harness{t: t, fake: fake, c: &client{more: make(chan struct{}, 1)}, done: make(chan error, 1), logs: &logBuffer{}}
+	h := &harness{t: t, fake: fake, c: &client{more: make(chan struct{}, 1)}, done: make(chan error, 1), logs: &logBuffer{}, opened: make(chan string, 8)}
 	log := slog.New(slog.NewTextHandler(h.logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	cfg := Config{CodexPath: "/fake/codex", Env: []string{"A=1"}, Spawn: fake.Spawn, Log: log,
+		OpenURL: func(_ context.Context, page string) error { h.opened <- page; return nil }}
+	for _, w := range with {
+		w(&cfg)
+	}
 	go func() {
-		h.done <- Serve(context.Background(), toAgentR, fromAgentW, Config{CodexPath: "/fake/codex", Env: []string{"A=1"}, Spawn: fake.Spawn, Log: log})
+		h.done <- Serve(context.Background(), toAgentR, fromAgentW, cfg)
 		_ = fromAgentW.Close()
 	}()
 	h.conn = acp.NewAgentConn(fromAgentR, toAgentW, func(*acp.AgentConn) acp.Client { return h.c })
@@ -143,9 +152,9 @@ func start(t *testing.T, fake *appservertest.Fake) *harness {
 
 // initialized is a harness whose client has initialized the agent, and
 // takes forms.
-func initialized(t *testing.T, fake *appservertest.Fake) *harness {
+func initialized(t *testing.T, fake *appservertest.Fake, with ...func(*Config)) *harness {
 	t.Helper()
-	h := start(t, fake)
+	h := start(t, fake, with...)
 	_, err := h.conn.Initialize(t.Context(), &acp.InitializeRequest{ProtocolVersion: acp.LatestProtocolVersion,
 		ClientCapabilities: &acp.ClientCapabilities{Elicitation: &acp.ElicitationCapabilities{Form: &acp.ElicitationFormCapabilities{}}},
 		ClientInfo:         &acp.Implementation{Name: "testclient", Title: "Test Client"}})

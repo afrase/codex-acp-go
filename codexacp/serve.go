@@ -23,6 +23,11 @@ type Config struct {
 	Env       []string          // codex's environment; nil = this process's
 	Spawn     appserver.Spawner // nil = appserver.Exec
 	Log       *slog.Logger      // nil = no log; the agent never logs a prompt or a token
+	// OpenURL opens a page in the user's browser: ChatGPT's sign-in page,
+	// when the client asks to sign in that way. nil = the system's
+	// browser (open on macOS, xdg-open elsewhere on Unix, the URL handler
+	// on Windows).
+	OpenURL func(ctx context.Context, url string) error
 }
 
 // interruptGrace is how long a prompt waits for Codex to end a turn it
@@ -50,6 +55,7 @@ type agent struct {
 	forms    bool // the client answers form elicitations
 	stopping bool // stop has begun: the app-server's exit is the agent's doing
 	sessions map[string]*session
+	signin   *signIn // the sign-in waiting for its login's end, if any
 	// children is the session each subagent's thread works for, by the
 	// thread's id: the root session whose turn spawned it, or spawned
 	// the subagent that did.
@@ -162,15 +168,24 @@ func (a *agent) startServer(ctx context.Context, info *acp.Implementation) error
 	return nil
 }
 
-// call calls the app-server.
+// call calls the app-server; its error is the client's.
 func (a *agent) call(ctx context.Context, method string, params, result any) error {
+	return clientError(a.callServer(ctx, method, params, result))
+}
+
+// callServer calls the app-server; its error is the app-server's.
+func (a *agent) callServer(ctx context.Context, method string, params, result any) error {
 	a.mu.Lock()
 	server := a.server
 	a.mu.Unlock()
 	if server == nil {
 		return &acp.Error{Code: acp.ErrorCodeInternalError, Message: "Codex isn't running: initialize first"}
 	}
-	err := server.Call(ctx, method, params, result)
+	return server.Call(ctx, method, params, result)
+}
+
+// clientError is an app-server call's error as the client hears it.
+func clientError(err error) error {
 	if e, ok := errors.AsType[*appserver.Error](err); ok {
 		// As the ACP SDK under codex-acp answers an error thrown: Internal
 		// error, the app-server's words in data.details. A client reads a
@@ -203,7 +218,8 @@ func (a *agent) Initialize(ctx context.Context, req *acp.InitializeRequest) (*ac
 				Delete: &acp.SessionDeleteCapabilities{},
 			},
 		},
-		Meta: steering.Advertise(nil),
+		AuthMethods: a.authMethods(),
+		Meta:        steering.Advertise(nil),
 	}, nil
 }
 
@@ -255,6 +271,10 @@ func (r router) thread(method string, params json.RawMessage) string {
 }
 
 func (r router) Notified(method string, params json.RawMessage) {
+	if method == "account/login/completed" {
+		r.a.loginCompleted(params)
+		return
+	}
 	tid := r.thread(method, params)
 	r.a.mu.Lock()
 	s := r.a.sessions[tid]
