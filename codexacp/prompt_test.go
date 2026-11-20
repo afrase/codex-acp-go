@@ -211,3 +211,32 @@ func TestWarnings(t *testing.T) {
 		t.Errorf("updates\n%s\nwant\n%s", got, want)
 	}
 }
+
+// A live item that doesn't decode is logged and skipped, one of a kind
+// the agent doesn't know shows nothing, and the turn goes on to its end,
+// even when turn/completed's own items don't decode.
+func TestPromptSkipsBadItems(t *testing.T) {
+	f := codex()
+	completed := appservertest.TurnOf("turn_1", "completed")
+	completed["items"] = []any{map[string]any{"type": "agentMessage", "id": "msg_1", "text": 7}}
+	f.Turn("turn_1", "",
+		itemNote("item/started", map[string]any{"type": "commandExecution", "id": "call_bad", "command": []string{"secret-word"}, "status": "inProgress"}),
+		itemNote("item/started", map[string]any{"type": "somethingNew", "id": "new_1"}),
+		delta("item/agentMessage/delta", "msg_1", "Done"),
+		note{Method: "turn/completed", Params: map[string]any{"threadId": "thr_1", "turn": completed}})
+	h := initialized(t, f)
+	sid := h.session()
+	resp, err := h.conn.Prompt(t.Context(), &acp.PromptRequest{SessionID: acp.SessionID(sid), Prompt: []acp.ContentBlock{textBlock("go")}})
+	if err != nil || resp.StopReason != acp.StopReasonEndTurn {
+		t.Fatalf("prompt: %v, %v", resp, err)
+	}
+	want := `{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Done"},"messageId":"msg_1"}` + "\n" +
+		`{"sessionUpdate":"session_info_update","title":"go"}`
+	if got := h.waitUpdates(2); got != want {
+		t.Errorf("updates\n%s\nwant\n%s", got, want)
+	}
+	logs := h.logs.String()
+	if !strings.Contains(logs, "method=item/started") || !strings.Contains(logs, "commandExecution") || strings.Contains(logs, "secret-word") {
+		t.Errorf("log\n%s", logs)
+	}
+}

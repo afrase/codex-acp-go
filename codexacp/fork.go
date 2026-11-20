@@ -83,7 +83,8 @@ func (a *agent) turnsOf(ctx context.Context, thread string) (map[string]string, 
 			return nil, err
 		}
 		for _, t := range read.Thread.Turns {
-			for _, it := range t.Items {
+			for _, b := range t.Items {
+				it, _ := appserver.DecodeItem(b) // its id is read even when the rest isn't
 				out[it.ID] = t.ID
 			}
 		}
@@ -97,7 +98,8 @@ func (a *agent) turnsOf(ctx context.Context, thread string) (map[string]string, 
 			return nil, err
 		}
 		for _, e := range page.Data {
-			out[e.Item.ID] = e.TurnID
+			it, _ := appserver.DecodeItem(e.Item)
+			out[it.ID] = e.TurnID
 		}
 		if page.NextCursor == nil || *page.NextCursor == "" || seen[*page.NextCursor] {
 			return out, nil

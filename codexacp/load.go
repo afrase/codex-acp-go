@@ -124,7 +124,11 @@ func (s *session) replayHistory(ctx context.Context, opened appserver.ThreadOpen
 			return err
 		}
 		for _, t := range read.Thread.Turns {
-			items = append(items, t.Items...)
+			for _, b := range t.Items {
+				if it, ok := s.item("thread/read", b); ok {
+					items = append(items, it)
+				}
+			}
 		}
 	case opened.ItemsBackwardsCursor != nil:
 		var err error
@@ -143,7 +147,8 @@ func (s *session) replayHistory(ctx context.Context, opened appserver.ThreadOpen
 
 // items is a paginated thread's items, oldest first, up to the item at
 // last (thread/resume's itemsBackwardsCursor), so one that comes during
-// the read waits for the live session.
+// the read waits for the live session. An item that doesn't decode is
+// left out, and the rest load.
 func (s *session) items(ctx context.Context, last *string) ([]appserver.Item, error) {
 	var end appserver.ThreadItemsListResponse
 	if err := s.a.call(ctx, "thread/items/list", appserver.ThreadItemsListParams{ThreadID: s.id, Cursor: last, Limit: 1, SortDirection: "desc"}, &end); err != nil {
@@ -152,7 +157,8 @@ func (s *session) items(ctx context.Context, last *string) ([]appserver.Item, er
 	if len(end.Data) == 0 {
 		return nil, nil
 	}
-	lastID := end.Data[0].Item.ID
+	newest, _ := appserver.DecodeItem(end.Data[0].Item) // its id is read even when the rest isn't
+	lastID := newest.ID
 	var out []appserver.Item
 	var cursor *string
 	seen := map[string]bool{}
@@ -162,8 +168,11 @@ func (s *session) items(ctx context.Context, last *string) ([]appserver.Item, er
 			return nil, err
 		}
 		for _, e := range page.Data {
-			out = append(out, e.Item)
-			if e.Item.ID == lastID {
+			it, ok := s.item("thread/items/list", e.Item)
+			if ok {
+				out = append(out, it)
+			}
+			if it.ID == lastID {
 				return out, nil
 			}
 		}
@@ -185,7 +194,7 @@ func (s *session) historyTitle(t appserver.Thread, items []appserver.Item) {
 				continue
 			}
 			var texts []string
-			for _, in := range it.Inputs() {
+			for _, in := range it.Inputs {
 				if in.Type == "text" {
 					texts = append(texts, in.Text)
 				}

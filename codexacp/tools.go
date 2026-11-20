@@ -100,7 +100,7 @@ func (t *tools) item(started bool, it appserver.Item) []acp.SessionUpdate {
 		}
 		parts := it.Summary
 		if len(parts) == 0 {
-			parts = it.ReasoningText()
+			parts = it.ReasoningContent
 		}
 		var kept []string
 		for _, p := range parts {
@@ -306,7 +306,7 @@ func searchFor(query, path string) string {
 
 // searchTitle is a web search's title by what it did.
 func searchTitle(it appserver.Item) string {
-	a := it.SearchAction()
+	a := it.SearchAction
 	if a == nil {
 		if it.Query != "" {
 			return "Web search: " + it.Query

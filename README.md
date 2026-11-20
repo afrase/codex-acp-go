@@ -198,7 +198,10 @@ the folder's `.codex/config.toml` applies.
 The app-server protocol is Codex's own, and the agent asks for its
 experimental API, as codex-acp does. To limit breakage, `appserver`:
 
-- parses leniently: it reads only the fields it uses;
+- parses leniently: it reads only the fields it uses, and decodes each
+  thread item on its own, so an item that doesn't decode is logged (its
+  kind, never its content) and skipped, and the rest of its turn or
+  history page still comes through;
 - types only what the agent sends and reads, from the schema Codex prints
   (`codex app-server generate-ts --experimental`);
 - pins no `codex` version.

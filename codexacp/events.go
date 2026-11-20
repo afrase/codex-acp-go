@@ -34,10 +34,14 @@ func (s *session) notified(method string, params json.RawMessage) {
 		if !decode(params, &n) {
 			return
 		}
-		if method == "item/started" && n.Item.Type != "userMessage" {
+		it, ok := s.item(method, n.Item)
+		if !ok {
+			return
+		}
+		if method == "item/started" && it.Type != "userMessage" {
 			s.modelOutput()
 		}
-		for _, u := range s.tools.item(method == "item/started", n.Item) {
+		for _, u := range s.tools.item(method == "item/started", it) {
 			s.update(u)
 		}
 	case "item/commandExecution/outputDelta", "item/commandExecution/terminalInteraction", "item/mcpToolCall/progress":
@@ -265,6 +269,17 @@ func serviceMessage(text string) string {
 		return text
 	}
 	return v.Error.Message
+}
+
+// item decodes an item a message of method carries. One that doesn't
+// decode is logged, by its kind and never its content, and skipped.
+func (s *session) item(method string, b json.RawMessage) (appserver.Item, bool) {
+	it, err := appserver.DecodeItem(b)
+	if err != nil {
+		s.a.log.Warn("skipped a Codex item that doesn't decode", "method", method, "session", s.id, "type", it.Type, "err", err)
+		return it, false
+	}
+	return it, true
 }
 
 // decode decodes params into v, saying whether it could.

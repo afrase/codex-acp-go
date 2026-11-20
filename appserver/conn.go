@@ -160,6 +160,7 @@ func (c *Conn) Call(ctx context.Context, method string, params, result any) erro
 			return nil
 		}
 		if err := json.Unmarshal(m.Result, result); err != nil {
+			c.log.Warn("an app-server result doesn't decode", "method", method, "err", err)
 			return fmt.Errorf("%s's result: %w", method, err)
 		}
 		return nil

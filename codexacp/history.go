@@ -20,7 +20,7 @@ func replay(it appserver.Item) []acp.SessionUpdate {
 	switch it.Type {
 	case "userMessage":
 		var out []acp.SessionUpdate
-		for _, in := range it.Inputs() {
+		for _, in := range it.Inputs {
 			if b, ok := inputBlock(in); ok {
 				c := &acp.ContentChunk{Content: b, MessageID: acp.MessageID(it.ID)}
 				out = append(out, acp.SessionUpdate{SessionUpdate: "user_message_chunk", UserMessageChunk: c})
@@ -37,7 +37,7 @@ func replay(it appserver.Item) []acp.SessionUpdate {
 	case "reasoning":
 		parts := it.Summary
 		if len(parts) == 0 {
-			parts = it.ReasoningText()
+			parts = it.ReasoningContent
 		}
 		out := make([]acp.SessionUpdate, 0, len(parts))
 		for _, p := range parts {

@@ -141,10 +141,10 @@ type ThreadItemsListResponse struct {
 	BackwardsCursor *string     `json:"backwardsCursor"`
 }
 
-// ItemEntry is an item and the turn it is in.
+// ItemEntry is an item (for DecodeItem) and the turn it is in.
 type ItemEntry struct {
-	TurnID string `json:"turnId"`
-	Item   Item   `json:"item"`
+	TurnID string          `json:"turnId"`
+	Item   json.RawMessage `json:"item"`
 }
 
 // ModelListParams is model/list's.
@@ -244,10 +244,10 @@ func (u UserInput) MarshalJSON() ([]byte, error) {
 
 // Turn is a turn of a thread.
 type Turn struct {
-	ID     string     `json:"id"`
-	Items  []Item     `json:"items"`
-	Status string     `json:"status"` // completed, interrupted, failed, inProgress
-	Error  *TurnError `json:"error"`
+	ID     string            `json:"id"`
+	Items  []json.RawMessage `json:"items"`  // each for DecodeItem
+	Status string            `json:"status"` // completed, interrupted, failed, inProgress
+	Error  *TurnError        `json:"error"`
 }
 
 // TurnError is why a turn failed.
@@ -275,9 +275,9 @@ type TurnNotification struct {
 
 // ItemNotification is item/started's and item/completed's.
 type ItemNotification struct {
-	ThreadID string `json:"threadId"`
-	TurnID   string `json:"turnId"`
-	Item     Item   `json:"item"`
+	ThreadID string          `json:"threadId"`
+	TurnID   string          `json:"turnId"`
+	Item     json.RawMessage `json:"item"` // for DecodeItem
 }
 
 // Delta is a piece of an item's text or output: item/agentMessage/delta,

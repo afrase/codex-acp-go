@@ -1,9 +1,11 @@
 package codexacp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -97,15 +99,35 @@ type harness struct {
 	c     *client
 	done  chan error
 	close func()
+	logs  *logBuffer
+}
+
+// logBuffer is the agent's log, as text.
+type logBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *logBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *logBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 func start(t *testing.T, fake *appservertest.Fake) *harness {
 	t.Helper()
 	toAgentR, toAgentW := io.Pipe()
 	fromAgentR, fromAgentW := io.Pipe()
-	h := &harness{t: t, fake: fake, c: &client{more: make(chan struct{}, 1)}, done: make(chan error, 1)}
+	h := &harness{t: t, fake: fake, c: &client{more: make(chan struct{}, 1)}, done: make(chan error, 1), logs: &logBuffer{}}
+	log := slog.New(slog.NewTextHandler(h.logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	go func() {
-		h.done <- Serve(context.Background(), toAgentR, fromAgentW, Config{CodexPath: "/fake/codex", Env: []string{"A=1"}, Spawn: fake.Spawn})
+		h.done <- Serve(context.Background(), toAgentR, fromAgentW, Config{CodexPath: "/fake/codex", Env: []string{"A=1"}, Spawn: fake.Spawn, Log: log})
 		_ = fromAgentW.Close()
 	}()
 	h.conn = acp.NewAgentConn(fromAgentR, toAgentW, func(*acp.AgentConn) acp.Client { return h.c })

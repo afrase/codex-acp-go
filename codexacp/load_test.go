@@ -152,3 +152,63 @@ func field(t *testing.T, obj json.RawMessage, name string) string {
 	}
 	return string(m[name])
 }
+
+// A history item that doesn't decode (a field Codex re-typed) is left out
+// and logged by its kind, never its content; an item of a kind the agent
+// doesn't know shows nothing; the rest of the page loads.
+func TestLoadSkipsBadItems(t *testing.T) {
+	f := codex()
+	thread := appservertest.Thread("thr_7", "/w/proj")
+	opened := appservertest.Opened(thread)
+	opened["itemsBackwardsCursor"] = "after_msg_1"
+	f.On("thread/resume", appservertest.Reply(opened))
+	entry := func(item map[string]any) map[string]any { return map[string]any{"turnId": "turn_1", "item": item} }
+	items := []map[string]any{
+		history()[0],
+		entry(map[string]any{"type": "commandExecution", "id": "call_bad", "command": []string{"secret-word"}, "status": "completed"}),
+		entry(map[string]any{"type": "somethingNew", "id": "new_1", "shape": map[string]any{"a": 1}}),
+		history()[3],
+	}
+	f.On("thread/items/list", func(params json.RawMessage) (any, error) {
+		var p struct {
+			Sort string `json:"sortDirection"`
+		}
+		_ = json.Unmarshal(params, &p)
+		if p.Sort == "desc" {
+			return map[string]any{"data": items[3:], "nextCursor": nil, "backwardsCursor": nil}, nil
+		}
+		return map[string]any{"data": items, "nextCursor": nil, "backwardsCursor": nil}, nil
+	})
+	h := initialized(t, f)
+	if _, err := h.conn.LoadSession(t.Context(), &acp.LoadSessionRequest{SessionID: "thr_7", Cwd: "/w/proj", MCPServers: []acp.MCPServer{}}); err != nil {
+		t.Fatal(err)
+	}
+	updates := strings.Split(h.updates(), "\n")
+	if len(updates) != 5 || !strings.Contains(updates[4], `"messageId":"msg_1"`) || strings.Contains(h.updates(), "call_bad") {
+		t.Errorf("updates\n%s", h.updates())
+	}
+	logs := h.logs.String()
+	if !strings.Contains(logs, "level=WARN") || !strings.Contains(logs, "method=thread/items/list") || !strings.Contains(logs, "commandExecution") ||
+		strings.Contains(logs, "secret-word") {
+		t.Errorf("log\n%s", logs)
+	}
+}
+
+// A legacy thread's turn with a bad item still replays its other items.
+func TestLoadLegacySkipsBadItems(t *testing.T) {
+	f := codex()
+	thread := appservertest.Thread("thr_7", "/w/proj")
+	thread["historyMode"], thread["name"] = "legacy", "Named"
+	f.On("thread/resume", appservertest.Reply(appservertest.Opened(thread)))
+	withTurns := appservertest.Thread("thr_7", "/w/proj")
+	turn := appservertest.TurnOf("turn_1", "completed")
+	turn["items"] = []any{map[string]any{"type": "agentMessage", "id": "msg_0", "text": 7}, history()[3]["item"]}
+	withTurns["turns"] = []any{turn}
+	f.On("thread/read", appservertest.Reply(map[string]any{"thread": withTurns, "readState": nil}))
+	h := initialized(t, f)
+	if _, err := h.conn.LoadSession(t.Context(), &acp.LoadSessionRequest{SessionID: "thr_7", Cwd: "/w/proj", MCPServers: []acp.MCPServer{}}); err != nil {
+		t.Fatal(err)
+	}
+	check(t, h.updates(), `{"sessionUpdate":"session_info_update","title":"Named"}`,
+		`{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Fixed."},"messageId":"msg_1"}`)
+}
