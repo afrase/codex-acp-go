@@ -14,6 +14,11 @@ type InitializeParams struct {
 	Capabilities *InitializeCapabilities `json:"capabilities"`
 }
 
+// InitializeResponse is initialize's answer.
+type InitializeResponse struct {
+	UserAgent string `json:"userAgent"` // Codex's name and version, and the platform's
+}
+
 // ClientInfo names the client to Codex (its logs, its originator).
 type ClientInfo struct {
 	Name    string `json:"name"`

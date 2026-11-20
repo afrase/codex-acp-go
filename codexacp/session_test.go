@@ -34,6 +34,9 @@ func TestInitialize(t *testing.T) {
 		!caps.MCPCapabilities.HTTP || caps.MCPCapabilities.SSE {
 		t.Errorf("initialize answered %s", jsonOf(t, resp))
 	}
+	if !strings.Contains(h.logs.String(), "userAgent=fake-codex/0.163.0") {
+		t.Errorf("log\n%s", h.logs.String())
+	}
 }
 
 // A new session is a thread started in its folder, trusted, with the

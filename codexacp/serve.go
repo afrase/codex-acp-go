@@ -136,8 +136,9 @@ func (a *agent) startServer(ctx context.Context, info *acp.Implementation) error
 	if client.Version == "" {
 		client.Version = Version
 	}
+	var hello appserver.InitializeResponse
 	err = server.Call(ctx, "initialize", appserver.InitializeParams{ClientInfo: client,
-		Capabilities: &appserver.InitializeCapabilities{ExperimentalAPI: true}}, nil)
+		Capabilities: &appserver.InitializeCapabilities{ExperimentalAPI: true}}, &hello)
 	if err != nil {
 		_ = server.Close()
 		proc.Kill()
@@ -146,6 +147,7 @@ func (a *agent) startServer(ctx context.Context, info *acp.Implementation) error
 		}
 		return fmt.Errorf("codex app-server: %w", err)
 	}
+	a.log.Info("codex app-server started", "userAgent", hello.UserAgent)
 	a.server, a.proc = server, proc
 	go func() { // Codex gone, the agent goes: the client says the agent quit
 		<-server.Done()
