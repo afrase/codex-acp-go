@@ -75,19 +75,25 @@ func TestUserInputJSON(t *testing.T) {
 	}
 }
 
-// Codex has a login when it has an account or its provider needs none.
+// Codex has a login when it has an account or its provider needs none;
+// the account's type is the login's.
 func TestSignedIn(t *testing.T) {
-	for src, want := range map[string]bool{
-		`{"account":null,"requiresOpenaiAuth":true}`:              false,
-		`{"account":{"type":"apiKey"},"requiresOpenaiAuth":true}`: true,
-		`{"account":null,"requiresOpenaiAuth":false}`:             true,
+	for src, want := range map[string]struct {
+		in   bool
+		kind string
+	}{
+		`{"account":null,"requiresOpenaiAuth":true}`:                                       {false, ""},
+		`{"account":{"type":"apiKey"},"requiresOpenaiAuth":true}`:                          {true, "apiKey"},
+		`{"account":{"type":"chatgpt","email":"a@example.com"},"requiresOpenaiAuth":true}`: {true, "chatgpt"},
+		`{"account":null,"requiresOpenaiAuth":false}`:                                      {true, ""},
+		`{"requiresOpenaiAuth":false}`:                                                     {true, ""},
 	} {
 		var r AccountReadResponse
 		if err := json.Unmarshal([]byte(src), &r); err != nil {
 			t.Fatal(err)
 		}
-		if r.SignedIn() != want {
-			t.Errorf("%s: signed in %v", src, !want)
+		if r.SignedIn() != want.in || r.AccountType() != want.kind {
+			t.Errorf("%s: signed in %v, type %q", src, r.SignedIn(), r.AccountType())
 		}
 	}
 }

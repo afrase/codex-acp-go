@@ -49,6 +49,44 @@ func (r AccountReadResponse) SignedIn() bool {
 	return !r.RequiresOpenaiAuth || (len(r.Account) > 0 && string(r.Account) != "null")
 }
 
+// AccountType is the login's type (apiKey, chatgpt, amazonBedrock), or
+// "" without one.
+func (r AccountReadResponse) AccountType() string {
+	var acct struct {
+		Type string `json:"type"`
+	}
+	_ = json.Unmarshal(r.Account, &acct) // null, or none: no type
+	return acct.Type
+}
+
+// LoginStartParams is account/login/start's: Type chatgpt signs in
+// through a browser, apiKey with APIKey.
+type LoginStartParams struct {
+	Type   string `json:"type"`
+	APIKey string `json:"apiKey,omitempty"`
+}
+
+// LoginStartResponse is account/login/start's answer. A chatgpt login
+// has an id, and a page for the user to open in a browser; it ends with
+// account/login/completed.
+type LoginStartResponse struct {
+	Type    string `json:"type"`
+	LoginID string `json:"loginId"`
+	AuthURL string `json:"authUrl"`
+}
+
+// LoginCancelParams is account/login/cancel's.
+type LoginCancelParams struct {
+	LoginID string `json:"loginId"`
+}
+
+// LoginCompleted is account/login/completed's params: how a login ended.
+type LoginCompleted struct {
+	LoginID *string `json:"loginId"` // null for a login with no id
+	Success bool    `json:"success"`
+	Error   *string `json:"error"`
+}
+
 // ThreadStartParams is thread/start's.
 type ThreadStartParams struct {
 	Cwd    string         `json:"cwd,omitempty"`
