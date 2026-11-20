@@ -240,3 +240,25 @@ func TestPromptSkipsBadItems(t *testing.T) {
 		t.Errorf("log\n%s", logs)
 	}
 }
+
+// A message that doesn't decode is logged by its method, never its
+// content; a turn/completed that doesn't still ends the prompt by its
+// turn's id.
+func TestUndecodableMessages(t *testing.T) {
+	f := codex()
+	completed := appservertest.TurnOf("turn_1", "completed")
+	completed["status"] = map[string]any{"type": "completed"}
+	f.Turn("turn_1", "",
+		note{Method: "item/agentMessage/delta", Params: map[string]any{"threadId": "thr_1", "turnId": "turn_1", "itemId": "msg_1", "delta": []string{"secret-word"}}},
+		note{Method: "turn/completed", Params: map[string]any{"threadId": "thr_1", "turn": completed}})
+	h := initialized(t, f)
+	sid := h.session()
+	resp, err := h.conn.Prompt(t.Context(), &acp.PromptRequest{SessionID: acp.SessionID(sid), Prompt: []acp.ContentBlock{textBlock("go")}})
+	if err != nil || resp.StopReason != acp.StopReasonEndTurn {
+		t.Fatalf("prompt: %v, %v", resp, err)
+	}
+	logs := h.logs.String()
+	if !strings.Contains(logs, "method=item/agentMessage/delta") || !strings.Contains(logs, "method=turn/completed") || strings.Contains(logs, "secret-word") {
+		t.Errorf("log\n%s", logs)
+	}
+}

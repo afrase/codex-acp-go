@@ -219,7 +219,22 @@ func threadOf(params json.RawMessage) string {
 	var p struct {
 		ThreadID *string `json:"threadId"`
 	}
-	_ = json.Unmarshal(params, &p)
+	if json.Unmarshal(params, &p) != nil || p.ThreadID == nil {
+		return ""
+	}
+	return *p.ThreadID
+}
+
+// thread is the threadId of a message of method; params that don't
+// decode are logged, by the method, and have none.
+func (r router) thread(method string, params json.RawMessage) string {
+	var p struct {
+		ThreadID *string `json:"threadId"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		r.a.log.Warn("a Codex message's thread can't be read", "method", method, "err", err)
+		return ""
+	}
 	if p.ThreadID == nil {
 		return ""
 	}
@@ -227,7 +242,7 @@ func threadOf(params json.RawMessage) string {
 }
 
 func (r router) Notified(method string, params json.RawMessage) {
-	tid := threadOf(params)
+	tid := r.thread(method, params)
 	r.a.mu.Lock()
 	s := r.a.sessions[tid]
 	var all []*session
@@ -249,7 +264,7 @@ func (r router) Notified(method string, params json.RawMessage) {
 
 func (r router) Asked(ctx context.Context, method string, params json.RawMessage) (any, error) {
 	r.a.mu.Lock()
-	s := r.a.sessions[threadOf(params)]
+	s := r.a.sessions[r.thread(method, params)]
 	r.a.mu.Unlock()
 	if s == nil {
 		return refusal(method), nil

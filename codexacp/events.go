@@ -18,8 +18,17 @@ func (s *session) notified(method string, params json.RawMessage) {
 	switch method {
 	case "turn/started", "turn/completed":
 		var n appserver.TurnNotification
-		if !decode(params, &n) {
-			return
+		if !s.decode(method, params, &n) {
+			// The turn's id alone still starts or ends the prompt's turn.
+			var id struct {
+				Turn struct {
+					ID string `json:"id"`
+				} `json:"turn"`
+			}
+			if json.Unmarshal(params, &id) != nil || id.Turn.ID == "" {
+				return
+			}
+			n.Turn = appserver.Turn{ID: id.Turn.ID}
 		}
 		if method == "turn/completed" {
 			s.tools.turnEnded()
@@ -31,7 +40,7 @@ func (s *session) notified(method string, params json.RawMessage) {
 		s.text(method, params)
 	case "item/started", "item/completed":
 		var n appserver.ItemNotification
-		if !decode(params, &n) {
+		if !s.decode(method, params, &n) {
 			return
 		}
 		it, ok := s.item(method, n.Item)
@@ -46,7 +55,7 @@ func (s *session) notified(method string, params json.RawMessage) {
 		}
 	case "item/commandExecution/outputDelta", "item/commandExecution/terminalInteraction", "item/mcpToolCall/progress":
 		var d appserver.Delta
-		if decode(params, &d) {
+		if s.decode(method, params, &d) {
 			if u, ok := s.tools.progress(method, d); ok {
 				s.update(u)
 			}
@@ -68,7 +77,7 @@ func (s *session) notified(method string, params json.RawMessage) {
 // part of a reasoning's summary starts after a blank line.
 func (s *session) text(method string, params json.RawMessage) {
 	var d appserver.Delta
-	if !decode(params, &d) {
+	if !s.decode(method, params, &d) {
 		return
 	}
 	switch method {
@@ -90,13 +99,13 @@ func (s *session) info(method string, params json.RawMessage) {
 		var n struct {
 			Status json.RawMessage `json:"status"`
 		}
-		if !decode(params, &n) {
+		if !s.decode(method, params, &n) {
 			return
 		}
 		info.Meta = map[string]any{"codex": map[string]any{"threadStatus": n.Status}}
 	} else {
 		var n appserver.ThreadNameNotification
-		if !decode(params, &n) {
+		if !s.decode(method, params, &n) {
 			return
 		}
 		info.Title = acp.Nullable[string]{Present: true} // null: no name
@@ -115,7 +124,7 @@ func (s *session) info(method string, params json.RawMessage) {
 // plan takes Codex's to-do plan, as ACP's plan.
 func (s *session) plan(params json.RawMessage) {
 	var n appserver.PlanNotification
-	if !decode(params, &n) {
+	if !s.decode("turn/plan/updated", params, &n) {
 		return
 	}
 	plan := &acp.Plan{Entries: []acp.PlanEntry{}}
@@ -137,7 +146,7 @@ func (s *session) unthreaded(method string, params json.RawMessage) {
 		return
 	}
 	var w appserver.WarningNotification
-	if !decode(params, &w) {
+	if !s.decode(method, params, &w) {
 		return
 	}
 	switch method {
@@ -155,7 +164,7 @@ func (s *session) unthreaded(method string, params json.RawMessage) {
 			ToModel   string `json:"toModel"`
 			Reason    string `json:"reason"`
 		}
-		if decode(params, &r) {
+		if s.decode(method, params, &r) {
 			s.update(chunk("agent_thought_chunk", "", "Model rerouted from "+r.FromModel+" to "+r.ToModel+" ("+r.Reason+").\n\n"))
 		}
 	}
@@ -166,7 +175,7 @@ func (s *session) unthreaded(method string, params json.RawMessage) {
 // missing login or a spent limit fails the prompt.
 func (s *session) turnError(params json.RawMessage) {
 	var n appserver.ErrorNotification
-	if !decode(params, &n) {
+	if !s.decode("error", params, &n) {
 		return
 	}
 	t := s.running()
@@ -195,7 +204,7 @@ func (t *turn) fail(err error) {
 // request's tokens of the model's window) and the prompt's count.
 func (s *session) tokenUsage(params json.RawMessage) {
 	var n appserver.TokenUsageNotification
-	if !decode(params, &n) {
+	if !s.decode("thread/tokenUsage/updated", params, &n) {
 		return
 	}
 	total := n.TokenUsage.Total
@@ -282,5 +291,13 @@ func (s *session) item(method string, b json.RawMessage) (appserver.Item, bool) 
 	return it, true
 }
 
-// decode decodes params into v, saying whether it could.
-func decode(params json.RawMessage, v any) bool { return json.Unmarshal(params, v) == nil }
+// decode decodes the params of a message of method into v, saying
+// whether it could; when it can't, that is logged by the method, never
+// the content, and the message is dropped.
+func (s *session) decode(method string, params json.RawMessage, v any) bool {
+	if err := json.Unmarshal(params, v); err != nil {
+		s.a.log.Warn("skipped a Codex message that doesn't decode", "method", method, "session", s.id, "err", err)
+		return false
+	}
+	return true
+}

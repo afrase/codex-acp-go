@@ -33,25 +33,25 @@ func (s *session) asked(ctx context.Context, method string, params json.RawMessa
 	switch method {
 	case "item/commandExecution/requestApproval":
 		var p appserver.CommandApproval
-		if !decode(params, &p) {
+		if !s.decode(method, params, &p) {
 			return refusal(method), nil
 		}
 		return s.approveCommand(ctx, p), nil
 	case "item/fileChange/requestApproval":
 		var p appserver.FileChangeApproval
-		if !decode(params, &p) {
+		if !s.decode(method, params, &p) {
 			return refusal(method), nil
 		}
 		return s.approveFileChange(ctx, p), nil
 	case "item/tool/requestUserInput":
 		var q question
-		if !decode(params, &q) {
+		if !s.decode(method, params, &q) {
 			return refusal(method), nil
 		}
 		return s.askQuestions(ctx, q), nil
 	case "mcpServer/elicitation/request":
 		var e mcpElicitation
-		if !decode(params, &e) {
+		if !s.decode(method, params, &e) {
 			return refusal(method), nil
 		}
 		return s.askMCP(ctx, e), nil

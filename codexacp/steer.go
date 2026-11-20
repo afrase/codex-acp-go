@@ -17,7 +17,7 @@ func (a *agent) ExtMethod(ctx context.Context, method string, params json.RawMes
 		return a.UnimplementedAgent.ExtMethod(ctx, method, params)
 	}
 	var req steering.Request[acp.ContentBlock]
-	if !decode(params, &req) {
+	if json.Unmarshal(params, &req) != nil {
 		return nil, invalidParams("steering: params")
 	}
 	return a.steer(ctx, &req)

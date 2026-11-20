@@ -2,6 +2,7 @@ package codexacp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"regexp"
 	"strings"
@@ -96,7 +97,7 @@ func errorDetails(err error) string {
 	var d struct {
 		Details string `json:"details"`
 	}
-	if decode(e.Data, &d) && d.Details != "" {
+	if json.Unmarshal(e.Data, &d) == nil && d.Details != "" {
 		return d.Details
 	}
 	return e.Message
