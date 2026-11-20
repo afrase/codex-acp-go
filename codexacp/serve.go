@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/afrase/acp-go/steering"
 	acp "github.com/afrase/acp-go/unstable"
@@ -23,6 +24,10 @@ type Config struct {
 	Log       *slog.Logger      // nil = no log; the agent never logs a prompt or a token
 }
 
+// interruptGrace is how long a prompt waits for Codex to end a turn it
+// interrupted before it ends cancelled anyway.
+var interruptGrace = 10 * time.Second
+
 // readLimit caps a message from the client: a prompt with images can run
 // to tens of MiB.
 const readLimit = 64 << 20
@@ -36,6 +41,7 @@ type agent struct {
 	client *acp.ClientConn
 	out    *afterAnswer
 	ctx    context.Context //nolint:containedctx // ends with the client's connection
+	grace  time.Duration   // interruptGrace, as Serve began
 
 	mu       sync.Mutex
 	server   *appserver.Conn
@@ -51,7 +57,7 @@ type agent struct {
 // It returns nil once the client has gone, ctx's error when ctx ended
 // first, and otherwise what broke the connection.
 func Serve(ctx context.Context, r io.Reader, w io.Writer, cfg Config) error {
-	a := &agent{cfg: cfg, log: cfg.Log, sessions: map[string]*session{}}
+	a := &agent{cfg: cfg, log: cfg.Log, grace: interruptGrace, sessions: map[string]*session{}}
 	if a.log == nil {
 		a.log = slog.New(slog.DiscardHandler)
 	}

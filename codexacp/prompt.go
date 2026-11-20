@@ -2,11 +2,13 @@ package codexacp
 
 import (
 	"context"
+	"encoding/json"
 	"net/url"
 	"path"
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	acp "github.com/afrase/acp-go/unstable"
 
@@ -25,6 +27,11 @@ type turn struct {
 	// stop sends turn/interrupt once; a second caller waits until it is
 	// answered, so what it sends next comes after.
 	stop sync.Once
+	// late is closed interruptGrace after the turn was cancelled: Codex
+	// hasn't ended it, and the prompt ends without its turn/completed.
+	late     chan struct{}
+	lateOnce sync.Once
+	lateStop *time.Timer
 
 	mu        sync.Mutex
 	id        string
@@ -62,11 +69,17 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 		}
 	}
 	tctx, cancel := context.WithCancel(a.ctx)
-	t := &turn{ctx: tctx, cancel: cancel, gone: make(chan struct{}), known: make(chan struct{}), done: make(chan struct{}), ended: make(chan appserver.Turn, 1), early: map[string]appserver.Turn{}, usage: tokens{start: s.total}}
+	t := &turn{ctx: tctx, cancel: cancel, gone: make(chan struct{}), known: make(chan struct{}), done: make(chan struct{}), late: make(chan struct{}),
+		ended: make(chan appserver.Turn, 1), early: map[string]appserver.Turn{}, usage: tokens{start: s.total}}
 	s.turn = t
 	s.mu.Unlock()
 	defer func() {
 		cancel()
+		t.mu.Lock()
+		if t.lateStop != nil {
+			t.lateStop.Stop()
+		}
+		t.mu.Unlock()
 		close(t.done)
 		s.mu.Lock()
 		if s.turn == t {
@@ -78,9 +91,13 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 	m, _ := modeByID(st.mode)
 	params := appserver.TurnStartParams{ThreadID: s.id, Input: input, ApprovalPolicy: m.approval, ApprovalsReviewer: m.reviewer,
 		SandboxPolicy: m.sandbox, Model: st.model, Effort: st.effort, Summary: "auto"}
-	var started appserver.TurnStartResponse
-	if err := a.call(ctx, "turn/start", params, &started); err != nil {
+	var answer json.RawMessage
+	if err := a.call(ctx, "turn/start", params, &answer); err != nil {
 		return nil, err
+	}
+	var started appserver.TurnStartResponse
+	if err := json.Unmarshal(answer, &started); err != nil {
+		return nil, s.unreadStart(ctx, t, answer, err)
 	}
 	s.started(t, started.Turn.ID)
 
@@ -92,6 +109,9 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 		s.interrupt(t)
 		return nil, ctx.Err()
 	case <-t.gone: // closed mid-turn (interrupted first): cancelled, as codex-acp ends it
+		closed = true
+	case <-t.late:
+		a.log.Warn("an interrupted turn didn't end: the prompt ends cancelled", "session", s.id, "after", a.grace)
 		closed = true
 	}
 	t.mu.Lock()
@@ -108,6 +128,29 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 	s.commands(ctx, true) // a turn may have added a skill
 	s.promptTitle(req.Prompt)
 	return &acp.PromptResponse{StopReason: acp.StopReasonEndTurn, Usage: usage}, nil
+}
+
+// unreadStart ends a prompt whose turn/start answer doesn't decode: the
+// turn Codex may be running is interrupted (by the id the answer or
+// turn/started gives) and the prompt fails once it has ended, or
+// interruptGrace after.
+func (s *session) unreadStart(ctx context.Context, t *turn, answer json.RawMessage, err error) error {
+	s.a.log.Warn("turn/start's answer doesn't decode: the turn is interrupted", "session", s.id, "err", err)
+	var id struct {
+		Turn struct {
+			ID string `json:"id"`
+		} `json:"turn"`
+	}
+	_ = json.Unmarshal(answer, &id)
+	s.interrupt(t)
+	s.started(t, id.Turn.ID)
+	select {
+	case <-t.ended:
+	case <-t.late:
+	case <-t.gone:
+	case <-ctx.Done():
+	}
+	return &acp.Error{Code: acp.ErrorCodeInternalError, Message: "Internal error", Data: raw(map[string]any{"details": "Codex's answer to turn/start couldn't be read"})}
 }
 
 // promptTitle titles a session that has no title yet after its prompt's
@@ -190,13 +233,20 @@ func (a *agent) Cancel(_ context.Context, n *acp.CancelNotification) error {
 
 // interrupt cancels t: its questions to the user are withdrawn (Codex is
 // told cancel), and Codex interrupts the turn once its id is known; the
-// prompt then ends cancelled at turn/completed.
+// prompt then ends cancelled at turn/completed, or interruptGrace after
+// the cancel if that never comes.
 func (s *session) interrupt(t *turn) {
 	t.mu.Lock()
 	t.cancelled = true
 	id := t.id
 	t.mu.Unlock()
 	t.cancel()
+	t.lateOnce.Do(func() {
+		timer := time.AfterFunc(s.a.grace, func() { close(t.late) })
+		t.mu.Lock()
+		t.lateStop = timer
+		t.mu.Unlock()
+	})
 	if id == "" {
 		return
 	}

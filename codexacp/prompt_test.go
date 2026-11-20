@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	acp "github.com/afrase/acp-go/unstable"
 
@@ -260,5 +261,123 @@ func TestUndecodableMessages(t *testing.T) {
 	logs := h.logs.String()
 	if !strings.Contains(logs, "method=item/agentMessage/delta") || !strings.Contains(logs, "method=turn/completed") || strings.Contains(logs, "secret-word") {
 		t.Errorf("log\n%s", logs)
+	}
+}
+
+// shortGrace has interrupted turns end interruptGrace sooner, for the
+// test.
+func shortGrace(t *testing.T) {
+	t.Helper()
+	old := interruptGrace
+	interruptGrace = 50 * time.Millisecond
+	t.Cleanup(func() { interruptGrace = old })
+}
+
+// A cancelled prompt whose turn/completed never comes ends cancelled
+// after the grace period, the turn interrupted once.
+func TestCancelWithoutTurnCompleted(t *testing.T) {
+	shortGrace(t)
+	f := codex()
+	f.On("turn/interrupt", appservertest.Reply(map[string]any{}))
+	f.Turn("turn_1", "")
+	h := initialized(t, f)
+	sid := h.session()
+	type result struct {
+		resp *acp.PromptResponse
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		resp, err := h.conn.Prompt(context.Background(), &acp.PromptRequest{SessionID: acp.SessionID(sid), Prompt: []acp.ContentBlock{textBlock("go")}})
+		done <- result{resp, err}
+	}()
+	if _, err := f.Await(t.Context(), "turn/start", 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.conn.Cancel(t.Context(), &acp.CancelNotification{SessionID: acp.SessionID(sid)}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case r := <-done:
+		if r.err != nil || r.resp.StopReason != acp.StopReasonCancelled {
+			t.Errorf("prompt: %v, %v", r.resp, r.err)
+		}
+	case <-time.After(5 * time.Second): // bounds a hang, orders nothing
+		t.Fatal("the prompt still waits for turn/completed")
+	}
+	if got := f.Calls("turn/interrupt"); len(got) != 1 || string(got[0]) != `{"threadId":"thr_1","turnId":"turn_1"}` {
+		t.Errorf("turn/interrupt %s", got)
+	}
+	if !strings.Contains(h.logs.String(), "an interrupted turn didn't end") {
+		t.Errorf("log\n%s", h.logs.String())
+	}
+}
+
+// A cancel before Codex has said the turn's id interrupts the turn once
+// it has, and the prompt ends cancelled at its turn/completed.
+func TestCancelBeforeTurnID(t *testing.T) {
+	f := codex()
+	release := make(chan struct{})
+	f.On("turn/start", func(json.RawMessage) (any, error) {
+		<-release
+		return map[string]any{"turn": appservertest.TurnOf("turn_1", "inProgress")}, nil
+	})
+	f.On("turn/interrupt", appservertest.Reply(map[string]any{}))
+	f.Then("turn/interrupt", func(json.RawMessage) {
+		f.Notify("turn/completed", map[string]any{"threadId": "thr_1", "turn": appservertest.TurnOf("turn_1", "interrupted")})
+	})
+	h := initialized(t, f)
+	sid := h.session()
+	done := make(chan *acp.PromptResponse, 1)
+	go func() {
+		resp, err := h.conn.Prompt(context.Background(), &acp.PromptRequest{SessionID: acp.SessionID(sid), Prompt: []acp.ContentBlock{textBlock("go")}})
+		if err != nil {
+			t.Error(err)
+		}
+		done <- resp
+	}()
+	if _, err := f.Await(t.Context(), "turn/start", 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.conn.Cancel(t.Context(), &acp.CancelNotification{SessionID: acp.SessionID(sid)}); err != nil {
+		t.Fatal(err)
+	}
+	// The cancel is a notification: a call after it is handled after it.
+	if _, err := h.conn.SetSessionMode(t.Context(), &acp.SetSessionModeRequest{SessionID: acp.SessionID(sid), ModeID: "read-only"}); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(f.Calls("turn/interrupt")); n != 0 {
+		t.Errorf("interrupted before the turn's id: %d", n)
+	}
+	close(release)
+	if resp := <-done; resp == nil || resp.StopReason != acp.StopReasonCancelled {
+		t.Errorf("prompt %v", resp)
+	}
+	if got := f.Calls("turn/interrupt"); len(got) != 1 || string(got[0]) != `{"threadId":"thr_1","turnId":"turn_1"}` {
+		t.Errorf("turn/interrupt %s", got)
+	}
+}
+
+// A turn/start answer that doesn't decode fails the prompt, and the turn
+// Codex started is interrupted by the id turn/started gives.
+func TestUnreadTurnStart(t *testing.T) {
+	f := codex()
+	f.On("turn/start", appservertest.Reply(map[string]any{"turn": "turn_1"}))
+	f.Then("turn/start", func(json.RawMessage) {
+		f.Notify("turn/started", map[string]any{"threadId": "thr_1", "turn": appservertest.TurnOf("turn_1", "inProgress")})
+	})
+	f.On("turn/interrupt", appservertest.Reply(map[string]any{}))
+	f.Then("turn/interrupt", func(json.RawMessage) {
+		f.Notify("turn/completed", map[string]any{"threadId": "thr_1", "turn": appservertest.TurnOf("turn_1", "interrupted")})
+	})
+	h := initialized(t, f)
+	sid := h.session()
+	_, err := h.conn.Prompt(t.Context(), &acp.PromptRequest{SessionID: acp.SessionID(sid), Prompt: []acp.ContentBlock{textBlock("go")}})
+	var e *acp.Error
+	if !errors.As(err, &e) || e.Code != acp.ErrorCodeInternalError {
+		t.Errorf("prompt: %v", err)
+	}
+	if got := f.Calls("turn/interrupt"); len(got) != 1 || string(got[0]) != `{"threadId":"thr_1","turnId":"turn_1"}` {
+		t.Errorf("turn/interrupt %s", got)
 	}
 }
