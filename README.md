@@ -20,9 +20,9 @@ It is tested against Codex CLI 0.163.0.
 
 > [!NOTE]
 > This project is unofficial. It is not affiliated with or endorsed by
-> OpenAI. It has no authentication code and never touches your
-> credentials. It runs the unmodified `codex` that you installed, which
-> signs in as usual.
+> OpenAI. It keeps no credentials. It runs the unmodified `codex` that
+> you installed, which signs in as usual, or through the client (see
+> [Signing in](#signing-in)).
 
 ## Why
 
@@ -40,9 +40,10 @@ It is tested against Codex CLI 0.163.0.
 
 You need:
 
-- [Codex CLI](https://github.com/openai/codex), installed and signed
-  in (run `codex` once in a terminal), or set up with a model provider in
-  its `config.toml`.
+- [Codex CLI](https://github.com/openai/codex), installed. Sign it in
+  by running `codex` once in a terminal, from your ACP client (see
+  [Signing in](#signing-in)), or set it up with a model provider in its
+  `config.toml`.
 - Go 1.27.4 or later, to build.
 
 ```sh
@@ -93,6 +94,34 @@ on its stdin and stdout. It logs to stderr. Its own log lines never hold a
 prompt or a token, but when Codex fails or exits, the last line `codex`
 wrote to its stderr is logged as it is.
 
+## Signing in
+
+If Codex is already signed in, there is nothing to do. Without a login
+that its provider needs, `session/new` (and load, resume and fork)
+answers `Authentication required`, and the client can sign Codex in with
+ACP's `authenticate`. `initialize` lists the same auth methods as
+codex-acp, so a client's "Sign in" works unchanged:
+
+| Id | Name | What it does |
+|---|---|---|
+| `api-key` | API Key | Gives Codex an API key: the request's `_meta["api-key"].apiKey`, else `$CODEX_API_KEY`, else `$OPENAI_API_KEY`. |
+| `chat-gpt` | ChatGPT | Starts Codex's ChatGPT login and opens its page in your browser. `authenticate` answers once you finish there. Not listed when `NO_BROWSER` is set. |
+
+The login is Codex's own and lands where `codex login` puts it. For
+`chat-gpt`:
+
+- A Codex already signed in to ChatGPT stays signed in, and no page opens.
+- A login that fails answers `Authentication required` ("Sign-in did not
+  complete").
+- A client that cancels the request (`$/cancel_request`) or disconnects
+  cancels the login. A second `authenticate` ends the first.
+- The agent opens the page with `open` on macOS, `xdg-open` on other Unix
+  systems, and the URL handler on Windows. A program that embeds the agent
+  can set `Config.OpenURL` instead.
+
+Device-code sign-in and custom model gateways, which codex-acp also
+offers, are not supported yet.
+
 ## Use it as a library
 
 The module has three packages:
@@ -140,6 +169,7 @@ func main() {
 
 | Area | Support |
 |---|---|
+| Sign-in | API key and ChatGPT, through ACP's `authenticate` (see [Signing in](#signing-in)). |
 | Sessions | New, load (replays the history), resume, fork (whole, or up to a message, with the JetBrains fork-at extension), list (by folder), delete (Codex archives the thread), close. |
 | Prompts | Text, images, resource links and embedded resources. Cancel (Codex interrupts the turn). A second prompt waits for the running turn. |
 | Steering | A message sent during a turn joins it (`_session/steering`). With no turn running, it answers `promptRequired` when the client asks for that, or starts a turn. |
@@ -171,9 +201,6 @@ Not yet:
   permissions (refused).
 - **Recovery after the app-server exits.** The agent quits, and the client
   sees it go.
-- **ACP's `authenticate`.** Sign in with `codex` itself. Without a login or
-  provider that Codex needs, `session/new` answers Authentication
-  required.
 - **MCP servers over SSE**, and ACP's own MCP transport.
 - **Windows** is not tested. The module builds there (CI checks that), but
   the tests run on macOS and Linux only.
