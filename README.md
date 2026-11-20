@@ -196,7 +196,11 @@ It departs in two places:
   sends it only to clients that declare plans.
 
 As codex-acp does, each session opens its folder as a trusted project, so
-the folder's `.codex/config.toml` applies.
+the folder's `.codex/config.toml` applies: whatever it sets, such as the
+model provider or MCP servers (programs Codex starts), takes effect
+without asking. Open only folders whose config you trust. Every session,
+new, loaded or resumed, starts in Auto review, as in codex-acp, whatever
+mode it last ran in.
 
 The app-server protocol is Codex's own, and the agent asks for its
 experimental API, as codex-acp does. To limit breakage, `appserver`:
