@@ -2,7 +2,7 @@
 
 All notable changes to this module. It follows [Semantic Versioning](https://semver.org); until 1.0, a minor version may change the API.
 
-## v0.1.0 (unreleased)
+## v0.1.0 (2026-11-21)
 
 The first release, tested against Codex CLI 0.163.0.
 
