@@ -29,6 +29,7 @@ type session struct {
 	titled    bool                  // the session has a title: Codex's name, or a prompt's
 	asks      int                   // MCP questions asked with no call of their own, for their calls' ids
 	published string                // the commands sent last, as JSON
+	stale     map[string]bool       // the turns interrupted, by id
 	tools     tools
 }
 

@@ -18,6 +18,12 @@ import (
 // approval is put to the user as a permission request, as codex-acp puts
 // it. The turn's cancel withdraws it, and Codex is told cancel.
 func (s *session) asked(ctx context.Context, method string, params json.RawMessage) (any, error) {
+	var of struct {
+		TurnID string `json:"turnId"`
+	}
+	if json.Unmarshal(params, &of) == nil && s.interrupted(of.TurnID) {
+		return refusal(method), nil // a turn cancelled: nothing of it is asked, as codex-acp
+	}
 	if t := s.running(); t != nil {
 		var stop context.CancelFunc
 		ctx, stop = context.WithCancel(ctx)
@@ -190,8 +196,10 @@ func commandOffers(p appserver.CommandApproval) ([]offer, bool) {
 		_ = json.Unmarshal(d, &whole)
 		switch {
 		case obj.Exec != nil && len(obj.Exec.Amendment) > 0:
+			// Only the rule Codex proposed, which the request shows, is
+			// offered.
 			prefix := execPrefix(obj.Exec.Amendment)
-			if strings.ContainsAny(prefix, "\r\n") {
+			if !slices.Equal(obj.Exec.Amendment, p.ProposedExecpolicyAmendment) || strings.ContainsAny(prefix, "\r\n") {
 				continue
 			}
 			offers = append(offers, offer{permission("accept_execpolicy_amendment", "Yes, and don't ask again for commands that start with "+codeSpan(prefix), "allow_always"), whole})
@@ -199,7 +207,7 @@ func commandOffers(p appserver.CommandApproval) ([]offer, bool) {
 			// Only a rule for the host the request shows, with an action
 			// the schema knows, is offered: the user can't see another.
 			a := obj.Network.Amendment
-			if !network || a.Host != p.NetworkApprovalContext.Host || (a.Action != "allow" && a.Action != "deny") {
+			if !network || a.Host != p.NetworkApprovalContext.Host || (a.Action != "allow" && a.Action != "deny") || !proposedNetwork(p, a.Host, a.Action) {
 				continue
 			}
 			label, kind := "No, and block this host in the future", "reject_always"
@@ -215,7 +223,31 @@ func commandOffers(p appserver.CommandApproval) ([]offer, bool) {
 	slices.SortStableFunc(offers, func(a, b offer) int { return order(a.option.Kind) - order(b.option.Kind) })
 	allows := slices.ContainsFunc(offers, func(o offer) bool { return order(o.option.Kind) < 2 })
 	refuses := slices.ContainsFunc(offers, func(o offer) bool { return order(o.option.Kind) == 2 })
+	// Two options with one id would give the first's decision for
+	// either: such a request is refused, as codex-acp refuses it.
+	ids := map[acp.PermissionOptionID]bool{}
+	for _, o := range offers {
+		if ids[o.option.OptionID] {
+			return nil, false
+		}
+		ids[o.option.OptionID] = true
+	}
 	return offers, allows && refuses
+}
+
+// proposedNetwork says Codex proposed the network rule for host and
+// action.
+func proposedNetwork(p appserver.CommandApproval, host, action string) bool {
+	for _, r := range p.ProposedNetworkPolicyAmendments {
+		var a struct {
+			Host   string `json:"host"`
+			Action string `json:"action"`
+		}
+		if json.Unmarshal(r, &a) == nil && a.Host == host && a.Action == action {
+			return true
+		}
+	}
+	return false
 }
 
 // namedOffer is the option of a decision Codex names by a word; false

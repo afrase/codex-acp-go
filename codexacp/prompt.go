@@ -241,6 +241,14 @@ func (s *session) interrupt(t *turn) {
 	id := t.id
 	t.mu.Unlock()
 	t.cancel()
+	if id != "" {
+		s.mu.Lock()
+		if s.stale == nil {
+			s.stale = map[string]bool{}
+		}
+		s.stale[id] = true
+		s.mu.Unlock()
+	}
 	t.lateOnce.Do(func() {
 		timer := time.AfterFunc(s.a.grace, func() { close(t.late) })
 		t.mu.Lock()
@@ -255,6 +263,13 @@ func (s *session) interrupt(t *turn) {
 			s.a.log.Warn("turn not interrupted", "session", s.id, "err", err)
 		}
 	})
+}
+
+// interrupted says the turn id was interrupted.
+func (s *session) interrupted(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return id != "" && s.stale[id]
 }
 
 // end ends the session's prompt, if one runs: the session closed or the

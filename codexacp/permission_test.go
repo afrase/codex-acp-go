@@ -217,8 +217,9 @@ func TestExecPolicyLabel(t *testing.T) {
 	}
 }
 
-// A network rule is offered only for the host the request shows and
-// with an action Codex's schema has; the one-time options stay.
+// A network rule is offered only for the host the request shows, with an
+// action Codex's schema has, and as Codex proposed it; the one-time
+// options stay.
 func TestNetworkAmendmentOffered(t *testing.T) {
 	rule := func(host, action string) json.RawMessage {
 		return json.RawMessage(`{"applyNetworkPolicyAmendment":{"network_policy_amendment":{"host":"` + host + `","action":"` + action + `"}}}`)
@@ -231,10 +232,14 @@ func TestNetworkAmendmentOffered(t *testing.T) {
 		{rule("example.com", "deny"), "allow_once,allow_for_session,apply_network_policy_amendment:0,decline"},
 		{rule("evil.test", "allow"), "allow_once,allow_for_session,decline"},
 		{rule("example.com", "allowAll"), "allow_once,allow_for_session,decline"},
+		{rule("example.org", "allow"), "allow_once,allow_for_session,decline"},
 	} {
 		offers, ok := commandOffers(appserver.CommandApproval{
 			NetworkApprovalContext: &appserver.NetworkContext{Host: "example.com", Protocol: "https"},
-			AvailableDecisions:     []json.RawMessage{json.RawMessage(`"accept"`), json.RawMessage(`"acceptForSession"`), c.rule, json.RawMessage(`"decline"`)},
+			ProposedNetworkPolicyAmendments: []json.RawMessage{json.RawMessage(`{"host":"example.com","action":"allow"}`),
+				json.RawMessage(`{"host":"example.com","action":"deny"}`), json.RawMessage(`{"host":"evil.test","action":"allow"}`),
+				json.RawMessage(`{"host":"example.com","action":"allowAll"}`)},
+			AvailableDecisions: []json.RawMessage{json.RawMessage(`"accept"`), json.RawMessage(`"acceptForSession"`), c.rule, json.RawMessage(`"decline"`)},
 		})
 		var ids []string
 		for _, o := range offers {
@@ -244,9 +249,86 @@ func TestNetworkAmendmentOffered(t *testing.T) {
 			t.Errorf("%s: %v %s, want %s", c.rule, ok, got, c.want)
 		}
 	}
+	// One Codex didn't propose isn't offered.
+	offers, ok := commandOffers(appserver.CommandApproval{
+		NetworkApprovalContext:          &appserver.NetworkContext{Host: "example.com", Protocol: "https"},
+		ProposedNetworkPolicyAmendments: []json.RawMessage{json.RawMessage(`{"host":"example.com","action":"deny"}`)},
+		AvailableDecisions:              []json.RawMessage{json.RawMessage(`"accept"`), rule("example.com", "allow"), json.RawMessage(`"decline"`)},
+	})
+	if !ok || len(offers) != 2 {
+		t.Errorf("not proposed: %v %d offers", ok, len(offers))
+	}
 	// Without a network request, a network rule isn't offered either.
-	offers, ok := commandOffers(appserver.CommandApproval{AvailableDecisions: []json.RawMessage{json.RawMessage(`"accept"`), rule("example.com", "allow"), json.RawMessage(`"cancel"`)}})
+	offers, ok = commandOffers(appserver.CommandApproval{AvailableDecisions: []json.RawMessage{json.RawMessage(`"accept"`), rule("example.com", "allow"), json.RawMessage(`"cancel"`)}})
 	if !ok || len(offers) != 2 {
 		t.Errorf("no network: %v %d offers", ok, len(offers))
+	}
+}
+
+// An exec rule is offered only as Codex proposed it, so the user sees
+// the rule a pick applies; two options with one id refuse the request.
+func TestExecAmendmentChecked(t *testing.T) {
+	rule := func(argv string) json.RawMessage {
+		return json.RawMessage(`{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":` + argv + `}}`)
+	}
+	ids := func(offers []offer) string {
+		var out []string
+		for _, o := range offers {
+			out = append(out, string(o.option.OptionID))
+		}
+		return strings.Join(out, ",")
+	}
+	accept, cancel := json.RawMessage(`"accept"`), json.RawMessage(`"cancel"`)
+	offers, ok := commandOffers(appserver.CommandApproval{ProposedExecpolicyAmendment: []string{"npm", "test"},
+		AvailableDecisions: []json.RawMessage{accept, rule(`["rm"]`), rule(`["npm","test"]`), cancel}})
+	if got := ids(offers); !ok || got != "allow_once,accept_execpolicy_amendment,cancel" {
+		t.Errorf("proposed npm test: %v %s", ok, got)
+	}
+	if jsonOf(t, offers[1].decision) != `{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["npm","test"]}}` {
+		t.Errorf("decision %s", jsonOf(t, offers[1].decision))
+	}
+	offers, ok = commandOffers(appserver.CommandApproval{AvailableDecisions: []json.RawMessage{accept, rule(`["rm"]`), cancel}})
+	if got := ids(offers); !ok || got != "allow_once,cancel" {
+		t.Errorf("nothing proposed: %v %s", ok, got)
+	}
+	if _, ok := commandOffers(appserver.CommandApproval{ProposedExecpolicyAmendment: []string{"npm", "test"},
+		AvailableDecisions: []json.RawMessage{accept, rule(`["npm","test"]`), rule(`["npm","test"]`), cancel}}); ok {
+		t.Error("two options with one id offered")
+	}
+}
+
+// A request of a turn the user cancelled is refused, even once the
+// prompt has ended, as codex-acp refuses one of a turn it interrupted.
+func TestStaleTurnRefused(t *testing.T) {
+	f := codex()
+	f.On("turn/interrupt", appservertest.Reply(map[string]any{}))
+	f.Then("turn/interrupt", func(json.RawMessage) {
+		f.Notify("turn/completed", map[string]any{"threadId": "thr_1", "turn": appservertest.TurnOf("turn_1", "interrupted")})
+	})
+	f.Turn("turn_1", "")
+	h := initialized(t, f)
+	h.c.permit = pick("allow_once")
+	sid := h.session()
+	done := make(chan *acp.PromptResponse, 1)
+	go func() {
+		resp, _ := h.conn.Prompt(context.Background(), &acp.PromptRequest{SessionID: acp.SessionID(sid), Prompt: []acp.ContentBlock{textBlock("go")}})
+		done <- resp
+	}()
+	if _, err := f.Await(t.Context(), "turn/start", 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.conn.Cancel(t.Context(), &acp.CancelNotification{SessionID: acp.SessionID(sid)}); err != nil {
+		t.Fatal(err)
+	}
+	if resp := <-done; resp == nil || resp.StopReason != acp.StopReasonCancelled {
+		t.Fatalf("prompt %v", resp)
+	}
+	approval := map[string]any{"threadId": "thr_1", "turnId": "turn_1", "itemId": "call_1", "reason": nil}
+	if got, err := f.Ask(t.Context(), "item/fileChange/requestApproval", approval); err != nil || string(got) != `{"decision":"cancel"}` {
+		t.Errorf("a cancelled turn's request: %s, %v", got, err)
+	}
+	approval["turnId"] = "turn_2"
+	if got, err := f.Ask(t.Context(), "item/fileChange/requestApproval", approval); err != nil || string(got) != `{"decision":"accept"}` {
+		t.Errorf("another turn's request: %s, %v", got, err)
 	}
 }
