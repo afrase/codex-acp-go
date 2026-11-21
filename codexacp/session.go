@@ -25,6 +25,11 @@ type session struct {
 	// prompting is held by a prompt from its start to its end: a second
 	// prompt waits for the first, as Codex runs one turn at a time.
 	prompting chan struct{}
+	// cancelSeq is where the latest session/cancel came among the
+	// client's messages (acp.SequenceFromContext): a prompt from before it
+	// that hasn't started its turn is cancelled.
+	cancelSeq uint64
+	cancels   chan struct{}         // closed and replaced at each session/cancel: it wakes the prompts waiting
 	total     *appserver.TokenCount // the thread's tokens, as last reported
 	titled    bool                  // the session has a title: Codex's name, or a prompt's
 	asks      int                   // MCP questions asked with no call of their own, for their calls' ids
@@ -34,7 +39,7 @@ type session struct {
 }
 
 func newSession(a *agent, id, cwd string) *session {
-	return &session{a: a, id: id, cwd: cwd, prompting: make(chan struct{}, 1), settings: settings{mode: defaultMode, collab: "default"}}
+	return &session{a: a, id: id, cwd: cwd, prompting: make(chan struct{}, 1), cancels: make(chan struct{}), settings: settings{mode: defaultMode, collab: "default"}}
 }
 
 // update sends the client one of the session's updates.

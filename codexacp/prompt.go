@@ -3,6 +3,7 @@ package codexacp
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/url"
 	"path"
 	"slices"
@@ -49,6 +50,22 @@ type turn struct {
 // Prompt runs a turn: the prompt as Codex input, in the session's mode,
 // model and effort, until turn/completed.
 func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.PromptResponse, error) {
+	return a.prompt(ctx, sequence(ctx), req)
+}
+
+// sequence is where the message ctx is for came among the client's
+// (acp.SequenceFromContext); one with none comes after every cancel.
+func sequence(ctx context.Context) uint64 {
+	if seq, ok := acp.SequenceFromContext(ctx); ok {
+		return seq
+	}
+	return math.MaxUint64
+}
+
+// prompt runs a turn for the seq-th of the client's messages: a
+// session/cancel that came after it, while it was still setting up or
+// waiting for the turn before it, ends it cancelled before it starts.
+func (a *agent) prompt(ctx context.Context, seq uint64, req *acp.PromptRequest) (*acp.PromptResponse, error) {
 	s, err := a.session(req.SessionID)
 	if err != nil {
 		return nil, err
@@ -57,14 +74,19 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 	if len(input) == 0 {
 		return nil, invalidParams("an empty prompt")
 	}
-	select { // one turn at a time
-	case s.prompting <- struct{}{}:
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	if ok, err := s.waitTurn(ctx, seq); !ok {
+		if err != nil {
+			return nil, err
+		}
+		return &acp.PromptResponse{StopReason: acp.StopReasonCancelled}, nil
 	}
 	defer func() { <-s.prompting }()
 
 	s.mu.Lock()
+	if seq < s.cancelSeq {
+		s.mu.Unlock()
+		return &acp.PromptResponse{StopReason: acp.StopReasonCancelled}, nil
+	}
 	st := s.settings
 	if hasImage(input) {
 		if m, ok := st.current(); ok && !takesImages(m) {
@@ -135,6 +157,27 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 	s.commands(ctx, true) // a turn may have added a skill
 	s.promptTitle(req.Prompt)
 	return &acp.PromptResponse{StopReason: acp.StopReasonEndTurn, Usage: usage}, nil
+}
+
+// waitTurn takes the session's one turn for the seq-th of the client's
+// messages, once the turn before it has ended: false, with no error, when
+// a session/cancel that came after it ends it first.
+func (s *session) waitTurn(ctx context.Context, seq uint64) (bool, error) {
+	for {
+		s.mu.Lock()
+		cancelled, wake := seq < s.cancelSeq, s.cancels
+		s.mu.Unlock()
+		if cancelled {
+			return false, nil
+		}
+		select {
+		case s.prompting <- struct{}{}:
+			return true, nil
+		case <-wake:
+		case <-ctx.Done():
+			return false, ctx.Err()
+		}
+	}
 }
 
 // unreadStart ends a prompt whose turn/start answer doesn't decode: the
@@ -224,12 +267,18 @@ func (s *session) completed(end appserver.Turn) {
 	}
 }
 
-func (a *agent) Cancel(_ context.Context, n *acp.CancelNotification) error {
+// Cancel stops the session's prompts: the one running, and those from
+// before the cancel still setting up or waiting for it.
+func (a *agent) Cancel(ctx context.Context, n *acp.CancelNotification) error {
 	s, err := a.session(n.SessionID)
 	if err != nil {
 		return nil //nolint:nilerr // a cancel of a session gone is done
 	}
+	seq, _ := acp.SequenceFromContext(ctx)
 	s.mu.Lock()
+	s.cancelSeq = max(s.cancelSeq, seq)
+	close(s.cancels)
+	s.cancels = make(chan struct{})
 	t := s.turn
 	s.mu.Unlock()
 	if t != nil {

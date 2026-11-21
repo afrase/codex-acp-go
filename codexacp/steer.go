@@ -66,8 +66,9 @@ func (a *agent) steer(ctx context.Context, req *steering.Request[acp.ContentBloc
 	if req.PromptRequired() {
 		return &steering.Response{Outcome: steering.PromptRequired, Reason: "noRunningTurn"}, nil
 	}
+	seq := sequence(ctx)
 	go func() { // a turn of its own, whose updates the client gets as a prompt's
-		_, err := a.Prompt(a.ctx, &acp.PromptRequest{SessionID: acp.SessionID(s.id), Prompt: req.Prompt})
+		_, err := a.prompt(a.ctx, seq, &acp.PromptRequest{SessionID: acp.SessionID(s.id), Prompt: req.Prompt})
 		if err != nil {
 			a.log.Warn("steered turn failed", "session", s.id, "err", err)
 		}

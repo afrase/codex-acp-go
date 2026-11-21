@@ -461,3 +461,48 @@ func TestDisconnectDoesNotWaitForInterrupt(t *testing.T) {
 		t.Fatal("Serve still waits on turn/interrupt")
 	}
 }
+
+// A cancel stops a prompt waiting for the running turn too: it ends
+// cancelled without starting a turn.
+func TestCancelQueuedPrompt(t *testing.T) {
+	f := codex()
+	f.Turn("turn_1", "", delta("item/agentMessage/delta", "msg_1", "Hi"))
+	f.On("turn/interrupt", appservertest.Reply(map[string]any{}))
+	f.Then("turn/interrupt", func(json.RawMessage) {
+		f.Notify("turn/completed", map[string]any{"threadId": "thr_1", "turn": appservertest.TurnOf("turn_1", "interrupted")})
+	})
+	h := initialized(t, f)
+	sid := h.session()
+	type result struct {
+		resp *acp.PromptResponse
+		err  error
+	}
+	prompt := func() chan result {
+		done := make(chan result, 1)
+		go func() {
+			resp, err := h.conn.Prompt(context.Background(), &acp.PromptRequest{SessionID: acp.SessionID(sid), Prompt: []acp.ContentBlock{textBlock("go")}})
+			done <- result{resp, err}
+		}()
+		return done
+	}
+	first := prompt()
+	h.waitUpdates(1) // the first prompt's turn runs
+	second := prompt()
+	h.waitSent("session/prompt", 2) // the second waits for it
+	if err := h.conn.Cancel(t.Context(), &acp.CancelNotification{SessionID: acp.SessionID(sid)}); err != nil {
+		t.Fatal(err)
+	}
+	for i, done := range []chan result{first, second} {
+		select {
+		case r := <-done:
+			if r.err != nil || r.resp.StopReason != acp.StopReasonCancelled {
+				t.Errorf("prompt %d: %v, %v", i+1, r.resp, r.err)
+			}
+		case <-time.After(5 * time.Second): // bounds a hang, orders nothing
+			t.Fatalf("prompt %d didn't end", i+1)
+		}
+	}
+	if n := len(f.Calls("turn/start")); n != 1 {
+		t.Errorf("%d turns started, want 1", n)
+	}
+}

@@ -103,6 +103,53 @@ type harness struct {
 	// opened is each page the agent opened in a browser: a test's never
 	// reach a real one.
 	opened chan string
+	sent   *sentLog
+}
+
+// sentLog is the client's messages the agent has read, by method: a
+// write to the pipe returns once the agent has read it all.
+type sentLog struct {
+	w    io.Writer
+	mu   sync.Mutex
+	n    map[string]int
+	more chan struct{}
+}
+
+func (l *sentLog) Write(p []byte) (int, error) {
+	n, err := l.w.Write(p)
+	var m struct {
+		Method string `json:"method"`
+	}
+	if json.Unmarshal(p[:n], &m) == nil && m.Method != "" {
+		l.mu.Lock()
+		l.n[m.Method]++
+		l.mu.Unlock()
+		select {
+		case l.more <- struct{}{}:
+		default:
+		}
+	}
+	return n, err
+}
+
+// waitSent waits until the agent has read n of the client's messages of
+// method.
+func (h *harness) waitSent(method string, n int) {
+	h.t.Helper()
+	deadline := time.After(5 * time.Second) // bounds a hang, orders nothing
+	for {
+		h.sent.mu.Lock()
+		got := h.sent.n[method]
+		h.sent.mu.Unlock()
+		if got >= n {
+			return
+		}
+		select {
+		case <-h.sent.more:
+		case <-deadline:
+			h.t.Fatalf("the agent read %d %s, want %d", got, method, n)
+		}
+	}
 }
 
 // logBuffer is the agent's log, as text.
@@ -139,7 +186,8 @@ func start(t *testing.T, fake *appservertest.Fake, with ...func(*Config)) *harne
 		h.done <- Serve(context.Background(), toAgentR, fromAgentW, cfg)
 		_ = fromAgentW.Close()
 	}()
-	h.conn = acp.NewAgentConn(fromAgentR, toAgentW, func(*acp.AgentConn) acp.Client { return h.c })
+	h.sent = &sentLog{w: toAgentW, n: map[string]int{}, more: make(chan struct{}, 1)}
+	h.conn = acp.NewAgentConn(fromAgentR, h.sent, func(*acp.AgentConn) acp.Client { return h.c })
 	h.close = func() { _ = toAgentW.Close() }
 	t.Cleanup(func() {
 		h.close()
