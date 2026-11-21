@@ -2,6 +2,24 @@
 
 All notable changes to this module. It follows [Semantic Versioning](https://semver.org); until 1.0, a minor version may change the API.
 
+## v0.3.1 (unreleased)
+
+- `codexacp`: `session/cancel` no longer waits for Codex to answer `turn/interrupt`. It ran on the goroutine that reads the client, so a slow Codex held up every later message, and a client gone mid-turn could leave Serve waiting for ever. The interrupt is sent on its own, within the 10 s grace.
+- `appserver`: a call gives up on its write when its ctx ends, where an app-server that stopped reading its stdin held every call and answer.
+- `codexacp`: a `session/cancel` also stops a prompt sent before it that is still setting up or waiting for the running turn (acp-go's `SequenceFromContext`): it ends cancelled and starts no turn.
+- `codexacp`: a prompt waiting for the running turn ends cancelled when its session closes or is loaded again, and starts no turn on it; it ran a turn no one heard and never returned.
+- `codexacp`: a prompt withdrawn (`$/cancel_request`) while `turn/start` is unanswered still has the turn Codex starts interrupted.
+- `codexacp`: an edit that removes a line starting with `-- ` (a SQL or Lua comment) keeps its diff: a hunk runs as many lines as its header counts.
+- `codexacp`: the sign-in page's opener runs in a session of its own on Unix, so a client that ends the agent's process group doesn't close the browser.
+- `codexacp`: Serve returns an error when the app-server exits on its own, and `codex-acp` exits 1, where both said nothing went wrong.
+- `codexacp`: a config option set while Codex changes the collaboration mode is no longer undone by that change.
+- `codexacp`: a `Config.Spawn` whose `Proc` leaves `Kill` or `Said` nil no longer panics.
+- `codexacp`: a new session, load or resume that fails once its thread is open unsubscribes from the thread.
+- `codexacp`: an approval or question of a turn cancelled before Codex said its id is answered cancel without reaching the user.
+- `codexacp`: `session/close` of a session that isn't open succeeds, as codex-acp's does. `session/delete` of an open session closes it first, and loading an open session again interrupts its turn.
+- `appserver`: `DecodeItem`'s error names the item's id as well as its kind, as the v0.2.0 notes said.
+- `go.mod` asks for Go 1.26, what the code needs, where it asked for 1.27.4.
+
 ## v0.3.0 (2026-11-21)
 
 - `codexacp`: sign-in through ACP, as codex-acp offers it. `initialize` lists the `api-key` and `chat-gpt` auth methods (ChatGPT not with `NO_BROWSER` set), and `authenticate` has Codex sign in: with an API key from the request or `$CODEX_API_KEY` / `$OPENAI_API_KEY`, or with ChatGPT, whose page opens in the browser and whose login is cancelled when the client cancels the request. A failed login answers Authentication required ("Sign-in did not complete"). `Config.OpenURL` opens the page another way.
