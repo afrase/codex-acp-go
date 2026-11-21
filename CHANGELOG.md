@@ -2,6 +2,14 @@
 
 All notable changes to this module. It follows [Semantic Versioning](https://semver.org); until 1.0, a minor version may change the API.
 
+## v0.3.4 (2026-11-21)
+
+No API change.
+
+- `codexacp`: a session whose model provider isn't OpenAI offers the model its `config.toml` names, and no longer OpenAI's models. Codex answers `model/list` with OpenAI's models under any provider, so the picker listed models that provider doesn't serve and left out the one configured. A session already on another model still lists it, beside the configured one.
+- `codexacp`: a model named by a path (`accounts/…/models/name`) shows as its last part.
+- `appserver`: `ConfigReadParams` and `ConfigReadResponse`, for `config/read`.
+
 ## v0.3.3 (2026-11-21)
 
 No API change.
