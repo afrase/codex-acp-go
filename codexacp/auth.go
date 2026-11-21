@@ -202,11 +202,16 @@ func (a *agent) openURL(ctx context.Context, page string) error {
 }
 
 // openBrowser opens page in the user's default browser. The opener
-// outlives the request, and runs detached from the agent's process group,
-// so a client that ends that group once signed in doesn't end the
-// browser the opener may have become.
+// outlives the request, and runs detached from the agent's process group
+// (on Windows, its job object), so a client that ends that group once
+// signed in doesn't end the browser the opener may have become. A job
+// that doesn't let it leave has it run in the job.
 func openBrowser(ctx context.Context, page string) error {
-	return launch(browserOpener(ctx, page))
+	err := launch(browserOpener(ctx, page))
+	if detachRefused(err) {
+		err = launch(browserCommand(ctx, page))
+	}
+	return err
 }
 
 // browserOpener is the command openBrowser starts.

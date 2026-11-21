@@ -13,3 +13,5 @@ func detach(cmd *exec.Cmd) *exec.Cmd {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	return cmd
 }
+
+func detachRefused(error) bool { return false }
