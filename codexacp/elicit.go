@@ -135,8 +135,7 @@ func values(v acp.ElicitationContentValue) []string {
 	case v.Integer == nil && v.Number == nil && v.Boolean == nil:
 		return v.StringArray
 	}
-	b, _ := json.Marshal(v)
-	return []string{string(b)}
+	return []string{string(raw(v))}
 }
 
 // mcpElicitation is mcpServer/elicitation/request's params.
