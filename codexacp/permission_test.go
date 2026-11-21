@@ -332,3 +332,52 @@ func TestStaleTurnRefused(t *testing.T) {
 		t.Errorf("another turn's request: %s, %v", got, err)
 	}
 }
+
+// A request of a turn cancelled before Codex said its id is answered
+// cancel, and never reaches the user.
+func TestApprovalAfterCancelBeforeTurnID(t *testing.T) {
+	f := codex()
+	release := make(chan struct{})
+	f.On("turn/start", func(json.RawMessage) (any, error) {
+		<-release
+		return map[string]any{"turn": appservertest.TurnOf("turn_1", "inProgress")}, nil
+	})
+	f.On("turn/interrupt", appservertest.Reply(map[string]any{}))
+	f.Then("turn/interrupt", func(json.RawMessage) {
+		f.Notify("turn/completed", map[string]any{"threadId": "thr_1", "turn": appservertest.TurnOf("turn_1", "interrupted")})
+	})
+	h := initialized(t, f)
+	h.c.permit = pick("allow_once")
+	sid := h.session()
+	done := make(chan error, 1)
+	go func() {
+		_, err := h.conn.Prompt(context.Background(), &acp.PromptRequest{SessionID: acp.SessionID(sid), Prompt: []acp.ContentBlock{textBlock("go")}})
+		done <- err
+	}()
+	if _, err := f.Await(t.Context(), "turn/start", 0); err != nil {
+		close(release)
+		t.Fatal(err)
+	}
+	if err := h.conn.Cancel(t.Context(), &acp.CancelNotification{SessionID: acp.SessionID(sid)}); err != nil {
+		t.Fatal(err)
+	}
+	// The cancel is a notification: a call after it is handled after it.
+	if _, err := h.conn.SetSessionMode(t.Context(), &acp.SetSessionModeRequest{SessionID: acp.SessionID(sid), ModeID: "read-only"}); err != nil {
+		t.Fatal(err)
+	}
+	answer, err := f.Ask(t.Context(), "item/commandExecution/requestApproval", map[string]any{
+		"threadId": "thr_1", "turnId": "turn_1", "itemId": "call_1", "startedAtMs": 1, "environmentId": nil, "kind": "command",
+		"command": "/bin/zsh -lc 'npm test'", "cwd": "/w/proj", "commandActions": []any{}})
+	close(release)
+	if err != nil || string(answer) != `{"decision":"cancel"}` {
+		t.Errorf("Codex was answered %s, %v", answer, err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	h.c.mu.Lock()
+	defer h.c.mu.Unlock()
+	if len(h.c.asked) != 0 {
+		t.Errorf("the user was asked %d times", len(h.c.asked))
+	}
+}

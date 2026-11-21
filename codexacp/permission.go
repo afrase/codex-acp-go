@@ -25,6 +25,9 @@ func (s *session) asked(ctx context.Context, method string, params json.RawMessa
 		return refusal(method), nil // a turn cancelled: nothing of it is asked, as codex-acp
 	}
 	if t := s.running(); t != nil {
+		if t.ctx.Err() != nil {
+			return refusal(method), nil // a turn cancelled before its id was known
+		}
 		var stop context.CancelFunc
 		ctx, stop = context.WithCancel(ctx)
 		defer stop()
