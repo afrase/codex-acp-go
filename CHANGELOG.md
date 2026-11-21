@@ -2,8 +2,9 @@
 
 All notable changes to this module. It follows [Semantic Versioning](https://semver.org); until 1.0, a minor version may change the API.
 
-## v0.3.1 (unreleased)
+## v0.3.1 (2026-11-21)
 
+- Builds on acp-go v0.4.1: a call whose context has ended is never sent, a response with neither result nor error fails its call, a request reusing a live id is refused, and requests wait while 64 answers are unread.
 - `codexacp`: `session/cancel` no longer waits for Codex to answer `turn/interrupt`. It ran on the goroutine that reads the client, so a slow Codex held up every later message, and a client gone mid-turn could leave Serve waiting for ever. The interrupt is sent on its own, within the 10 s grace.
 - `appserver`: a call gives up on its write when its ctx ends, where an app-server that stopped reading its stdin held every call and answer.
 - `codexacp`: a `session/cancel` also stops a prompt sent before it that is still setting up or waiting for the running turn (acp-go's `SequenceFromContext`): it ends cancelled and starts no turn.
