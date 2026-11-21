@@ -328,3 +328,41 @@ func TestSignInWithAPIKey(t *testing.T) {
 		})
 	}
 }
+
+// An account/read that fails as Codex fails when it can't reach the
+// service keeps the ChatGPT login and signs in with no new one; one that
+// fails as a login that doesn't work starts a new login.
+func TestSignInWhenAccountReadFails(t *testing.T) {
+	for _, message := range []string{"workspace routing discovery failed", "workspace routing discovery timed out"} {
+		f, _ := signedOut()
+		f.On("account/read", appservertest.Fail(-32603, message, nil))
+		h := initialized(t, f)
+		if err := wait(t, h.authenticate(t.Context(), "chat-gpt")); err != nil {
+			t.Errorf("%s: %v", message, err)
+		}
+		if n := len(f.Calls("account/login/start")); n != 0 {
+			t.Errorf("%s: %d logins started", message, n)
+		}
+	}
+	for _, message := range []string{"workspace routing discovery unauthorized (401)", "selected workspace missing from routing discovery",
+		"workspace routing requires a ChatGPT account id"} {
+		f, _ := signedOut()
+		f.On("account/read", appservertest.Fail(-32603, message, nil))
+		h := initialized(t, f)
+		done := h.authenticate(t.Context(), "chat-gpt")
+		if got := h.waitOpened(); got != page(1) {
+			t.Errorf("%s: opened %s", message, got)
+		}
+		f.Notify("account/login/completed", completed("login_1", true))
+		if err := wait(t, done); err != nil {
+			t.Errorf("%s: %v", message, err)
+		}
+	}
+	f, _ := signedOut()
+	f.On("account/read", appservertest.Fail(-32603, "something else", nil))
+	h := initialized(t, f)
+	var e *acp.Error
+	if err := wait(t, h.authenticate(t.Context(), "chat-gpt")); !errors.As(err, &e) || e.Code != acp.ErrorCodeInternalError {
+		t.Errorf("another failure: %v", err)
+	}
+}
