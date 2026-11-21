@@ -2,6 +2,15 @@
 
 All notable changes to this module. It follows [Semantic Versioning](https://semver.org); until 1.0, a minor version may change the API.
 
+## v0.3.2 (unreleased)
+
+No API change. Needs acp-go v0.5.0.
+
+- `codexacp`: a new session's (or fork's) available commands wait for its answer through acp-go's `AfterResponse`, not by matching the bytes the connection writes, so a change to acp-go's encoding can't break it.
+- `codexacp`, on Windows: the browser the sign-in opens leaves the agent's job object (`CREATE_BREAKAWAY_FROM_JOB`), so a client that ends the agent's job once signed in (as acp-go's `Start` does from v0.5.0) doesn't close it. Where the job doesn't allow that, the opener starts in the job, as before.
+- `codexacp`: `Main` waits for SIGTERM and SIGINT with `signal.NotifyContext`. The log line on a signal now reads `signal="terminated signal received"` where it read `signal=terminated`.
+- Tests: one wait loop, one serve path for the live tests, and shared prompt and question helpers.
+
 ## v0.3.1 (2026-11-21)
 
 - Builds on acp-go v0.4.1: a call whose context has ended is never sent, a response with neither result nor error fails its call, a request reusing a live id is refused, and requests wait while 64 answers are unread.
