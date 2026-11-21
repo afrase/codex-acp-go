@@ -1,6 +1,7 @@
 package codexacp
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -234,5 +235,39 @@ func TestFailedOpenUnsubscribes(t *testing.T) {
 	got := f.Calls("thread/unsubscribe")
 	if len(got) != 2 || string(got[0]) != `{"threadId":"thr_1"}` || string(got[1]) != `{"threadId":"thr_7"}` {
 		t.Errorf("unsubscribe %s", got)
+	}
+}
+
+// Loading a session again while its prompt runs interrupts the turn, as
+// the prompt ends cancelled.
+func TestLoadAgainMidTurnInterrupts(t *testing.T) {
+	f := codex()
+	f.Turn("turn_1", "", appservertest.Note{Method: "item/agentMessage/delta",
+		Params: map[string]any{"threadId": "thr_1", "turnId": "turn_1", "itemId": "msg_1", "delta": "Hi"}})
+	f.On("turn/interrupt", appservertest.Reply(map[string]any{}))
+	f.On("thread/resume", appservertest.Reply(appservertest.Opened(appservertest.Thread("thr_1", "/w/proj"))))
+	h := initialized(t, f)
+	sid := h.session()
+	done := make(chan *acp.PromptResponse, 1)
+	go func() {
+		resp, err := h.conn.Prompt(context.Background(), &acp.PromptRequest{SessionID: acp.SessionID(sid), Prompt: []acp.ContentBlock{textBlock("go")}})
+		if err != nil {
+			t.Error(err)
+		}
+		done <- resp
+	}()
+	h.waitUpdates(1) // the turn runs
+	if _, err := h.conn.LoadSession(t.Context(), &acp.LoadSessionRequest{SessionID: acp.SessionID(sid), Cwd: "/w/proj", MCPServers: []acp.MCPServer{}}); err != nil {
+		t.Fatal(err)
+	}
+	if resp := <-done; resp == nil || resp.StopReason != acp.StopReasonCancelled {
+		t.Errorf("prompt %v", resp)
+	}
+	got, err := f.Await(bounded(t), "turn/interrupt", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != `{"threadId":"thr_1","turnId":"turn_1"}` {
+		t.Errorf("turn/interrupt %s", got)
 	}
 }

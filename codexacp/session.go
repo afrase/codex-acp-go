@@ -66,6 +66,9 @@ func (a *agent) open(ctx context.Context, s *session, opened appserver.ThreadOpe
 	a.sessions[s.id] = s
 	a.mu.Unlock()
 	if old != nil { // loaded again: the new session takes the thread's notifications
+		if t := old.running(); t != nil {
+			old.interrupt(t) // Codex stops the turn whose prompt ends
+		}
 		old.end(errors.New("session opened again"))
 	}
 	return nil
