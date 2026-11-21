@@ -2,6 +2,12 @@
 
 All notable changes to this module. It follows [Semantic Versioning](https://semver.org); until 1.0, a minor version may change the API.
 
+## v0.3.3 (unreleased)
+
+No API change.
+
+- `codexacp`: plan-mode questions are built with acp-go's typed elicitation (`CreateElicitation`, `ElicitationProperties`), which keeps the fields' order as before. An answer to an MCP server's form, or to the questions, whose values aren't strings, numbers, booleans or string arrays (as ACP's `ElicitationContentValue` allows) is now taken as cancel, where it was passed on to Codex.
+
 ## v0.3.2 (2026-11-21)
 
 No API change. Needs acp-go v0.5.0.

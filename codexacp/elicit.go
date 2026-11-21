@@ -39,13 +39,6 @@ const (
 	notePrefix  = "user_note: "
 )
 
-// elicitation is the client's answer to elicitation/create.
-type elicitation struct {
-	Action  string         `json:"action"`
-	Content map[string]any `json:"content"`
-	Meta    map[string]any `json:"_meta"`
-}
-
 // askQuestions puts Codex's questions to the user as one form: each a
 // required string, with its options as choices (and "None of the above"
 // when it takes another answer, then an optional `<id>_note`), and gives
@@ -60,18 +53,18 @@ func (s *session) askQuestions(ctx context.Context, q question) any {
 		return none
 	}
 	props, required, notes := q.form()
-	req := map[string]any{"sessionId": s.id, "toolCallId": q.ItemID, "mode": "form", "message": "Codex needs your input to continue.",
-		"requestedSchema": map[string]any{"type": "object", "properties": ordered(props), "required": required},
-		"_meta":           map[string]any{"codex": map[string]any{"autoResolutionMs": q.AutoResolutionMs}}}
-	var resp elicitation
-	if err := s.a.client.Call(ctx, "elicitation/create", req, &resp); err != nil || resp.Action != "accept" {
+	resp, err := s.a.client.CreateElicitation(ctx, &acp.CreateElicitationRequest{Message: "Codex needs your input to continue.",
+		Meta: map[string]any{"codex": map[string]any{"autoResolutionMs": q.AutoResolutionMs}},
+		Form: &acp.ElicitationFormMode{SessionID: acp.SessionID(s.id), ToolCallID: acp.ToolCallID(q.ItemID),
+			RequestedSchema: acp.ElicitationSchema{Type: acp.ElicitationSchemaTypeObject, Properties: props, Required: required}}})
+	if err != nil || resp.Accept == nil {
 		return none
 	}
 	answers := map[string]any{}
 	for _, x := range q.Questions {
-		got := values(resp.Content[x.ID])
+		got := values(resp.Accept.Content[x.ID])
 		if note, ok := notes[x.ID]; ok {
-			for _, n := range values(resp.Content[note]) {
+			for _, n := range values(resp.Accept.Content[note]) {
 				got = append(got, notePrefix+strings.TrimSpace(n))
 			}
 		}
@@ -82,9 +75,9 @@ func (s *session) askQuestions(ctx context.Context, q question) any {
 	return map[string]any{"answers": answers}
 }
 
-// form is the questions' form: its fields in order (name, schema pairs),
-// those required, and each question's note field by its id.
-func (q question) form() (props []any, required []string, notes map[string]string) {
+// form is the questions' form: its fields in order, those required, and
+// each question's note field by its id.
+func (q question) form() (props acp.ElicitationProperties, required []string, notes map[string]string) {
 	ids := map[string]bool{}
 	for _, x := range q.Questions {
 		ids[x.ID] = true
@@ -98,34 +91,23 @@ func (q question) form() (props []any, required []string, notes map[string]strin
 		if title == "" {
 			title = x.ID
 		}
-		p := map[string]any{"type": "string", "title": title, "_meta": map[string]any{"codex": map[string]any{"isOther": x.IsOther, "isSecret": x.IsSecret}}}
-		if x.Header != "" {
-			p["description"] = x.Header
-		}
+		p := &acp.StringPropertySchema{Title: title, Description: x.Header, Meta: map[string]any{"codex": map[string]any{"isOther": x.IsOther, "isSecret": x.IsSecret}}}
 		other := x.IsOther && len(x.Options) > 0
-		if len(x.Options) > 0 {
-			var choices []map[string]any
-			hasOther := false
-			for _, o := range x.Options {
-				c := map[string]any{"const": o.Label, "title": o.Label}
-				if o.Description != "" {
-					c["description"] = o.Description
-				}
-				choices = append(choices, c)
-				hasOther = hasOther || o.Label == otherOption
-			}
-			if other && !hasOther {
-				choices = append(choices, map[string]any{"const": otherOption, "title": otherOption, "description": "Provide a different answer in the note field."})
-			}
-			p["oneOf"] = choices
+		hasOther := false
+		for _, o := range x.Options {
+			p.OneOf = append(p.OneOf, acp.EnumOption{Const: o.Label, Title: o.Label, Description: o.Description})
+			hasOther = hasOther || o.Label == otherOption
+		}
+		if other && !hasOther {
+			p.OneOf = append(p.OneOf, acp.EnumOption{Const: otherOption, Title: otherOption, Description: "Provide a different answer in the note field."})
 		}
 		required = append(required, x.ID)
-		props = append(props, x.ID, p)
+		props = append(props, acp.ElicitationProperty{Name: x.ID, Schema: acp.ElicitationPropertySchema{String: p}})
 		if other {
 			note := noteField(x.ID, ids)
 			notes[x.ID] = note
-			props = append(props, note, map[string]any{"type": "string", "title": "Additional answer or note",
-				"_meta": map[string]any{"codex": map[string]any{"questionId": x.ID, "role": "user_note", "isSecret": x.IsSecret}}})
+			props = append(props, acp.ElicitationProperty{Name: note, Schema: acp.ElicitationPropertySchema{String: &acp.StringPropertySchema{Title: "Additional answer or note",
+				Meta: map[string]any{"codex": map[string]any{"questionId": x.ID, "role": "user_note", "isSecret": x.IsSecret}}}}})
 		}
 	}
 	return props, required, notes
@@ -143,52 +125,18 @@ func noteField(id string, ids map[string]bool) string {
 }
 
 // values is an answer's value as strings: none for an empty one.
-func values(v any) []string {
-	switch x := v.(type) {
-	case nil:
-		return nil
-	case string:
-		if strings.TrimSpace(x) == "" {
+func values(v acp.ElicitationContentValue) []string {
+	switch {
+	case v.String != nil:
+		if strings.TrimSpace(*v.String) == "" {
 			return nil
 		}
-		return []string{x}
-	case []any:
-		out := make([]string, 0, len(x))
-		for _, e := range x {
-			out = append(out, fmt.Sprint(e))
-		}
-		return out
+		return []string{*v.String}
+	case v.Integer == nil && v.Number == nil && v.Boolean == nil:
+		return v.StringArray
 	}
-	return []string{fmt.Sprint(v)}
-}
-
-// orderedObject is a JSON object whose keys keep their order: a form's
-// fields are shown in it.
-type orderedObject []any // key, value, key, value…
-
-func ordered(pairs []any) orderedObject { return orderedObject(pairs) }
-
-func (o orderedObject) MarshalJSON() ([]byte, error) {
-	var b strings.Builder
-	b.WriteByte('{')
-	for i := 0; i+1 < len(o); i += 2 {
-		if i > 0 {
-			b.WriteByte(',')
-		}
-		k, err := json.Marshal(o[i])
-		if err != nil {
-			return nil, err
-		}
-		v, err := json.Marshal(o[i+1])
-		if err != nil {
-			return nil, err
-		}
-		b.Write(k)
-		b.WriteByte(':')
-		b.Write(v)
-	}
-	b.WriteByte('}')
-	return []byte(b.String()), nil
+	b, _ := json.Marshal(v)
+	return []string{string(b)}
 }
 
 // mcpElicitation is mcpServer/elicitation/request's params.
@@ -356,7 +304,7 @@ func (s *session) mcpForm(ctx context.Context, e mcpElicitation, callID string) 
 	if e.Meta != nil {
 		req["_meta"] = e.Meta
 	}
-	var resp elicitation
+	var resp acp.CreateElicitationResponse
 	if err := s.a.client.Call(ctx, "elicitation/create", req, &resp); err != nil {
 		return cancelled
 	}
@@ -364,17 +312,17 @@ func (s *session) mcpForm(ctx context.Context, e mcpElicitation, callID string) 
 	if len(resp.Meta) > 0 {
 		meta = resp.Meta
 	}
-	switch resp.Action {
-	case "accept":
+	switch {
+	case resp.Accept != nil:
 		content := any(nil)
-		if len(resp.Content) > 0 {
-			content = resp.Content
+		if len(resp.Accept.Content) > 0 {
+			content = resp.Accept.Content
 		}
 		if callID != "" {
 			s.update(callUpdate(acp.ToolCallUpdate{ToolCallID: acp.ToolCallID(callID), Status: "in_progress"}))
 		}
 		return map[string]any{"action": "accept", "content": content, "_meta": meta}
-	case "decline":
+	case resp.Decline:
 		return map[string]any{"action": "decline", "content": nil, "_meta": meta}
 	}
 	return map[string]any{"action": "cancel", "content": nil, "_meta": meta}
