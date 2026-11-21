@@ -186,28 +186,34 @@ func (a *agent) SetSessionConfigOption(ctx context.Context, req *acp.SetSessionC
 	s.mu.Lock()
 	st := s.settings
 	s.mu.Unlock()
+	// apply makes the change on the settings as they are once it is made:
+	// another change may have come while Codex was asked.
+	var apply func(*settings)
 	switch string(req.ConfigID) {
 	case optMode:
 		m, ok := modeByID(value)
 		if !ok {
 			return nil, invalidParams("no mode %q", value)
 		}
-		st.mode = m.id
+		apply = func(cur *settings) { cur.mode = m.id }
 	case optModel:
 		st.model = value
 		m, listed := st.current()
 		if !listed {
 			return nil, invalidParams("no model %q", value)
 		}
-		if !supports(m, st.effort) {
-			st.effort = m.DefaultReasoningEffort
+		apply = func(cur *settings) {
+			cur.model = value
+			if !supports(m, cur.effort) {
+				cur.effort = m.DefaultReasoningEffort
+			}
 		}
 	case optEffort:
 		m, _ := st.current()
 		if !supports(m, value) {
 			return nil, invalidParams("model %q has no effort %q", st.model, value)
 		}
-		st.effort = value
+		apply = func(cur *settings) { cur.effort = value }
 	case optCollab:
 		if value != "default" && value != "plan" {
 			return nil, invalidParams("no collaboration mode %q", value)
@@ -215,12 +221,12 @@ func (a *agent) SetSessionConfigOption(ctx context.Context, req *acp.SetSessionC
 		if err := s.setCollab(ctx, value, st); err != nil {
 			return nil, err
 		}
-		st.collab = value
+		apply = func(cur *settings) { cur.collab = value }
 	default:
 		return nil, invalidParams("no option %q", req.ConfigID)
 	}
 	s.mu.Lock()
-	s.settings = st
+	apply(&s.settings)
 	opts := s.settings.options()
 	s.mu.Unlock()
 	return &acp.SetSessionConfigOptionResponse{ConfigOptions: opts}, nil

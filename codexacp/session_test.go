@@ -2,6 +2,7 @@ package codexacp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -147,6 +148,46 @@ func TestSetOptionsAndClose(t *testing.T) {
 	}
 	if _, err := set("mode", "agent"); err == nil {
 		t.Error("a closed session took an option")
+	}
+}
+
+// A mode set while Codex is asked to change the collaboration mode stays
+// set: the collaboration mode's change doesn't write the old mode back.
+func TestOptionSetDuringCollabChange(t *testing.T) {
+	f := codex()
+	release := make(chan struct{})
+	f.On("thread/settings/update", func(json.RawMessage) (any, error) {
+		<-release
+		return map[string]any{}, nil
+	})
+	h := initialized(t, f)
+	sid := h.session()
+	done := make(chan []acp.SessionConfigOption, 1)
+	go func() {
+		resp, err := h.conn.SetSessionConfigOption(context.Background(), &acp.SetSessionConfigOptionRequest{SessionID: acp.SessionID(sid), ConfigID: optCollab,
+			ValueID: &acp.SetSessionConfigOptionRequestValueID{Value: "plan"}})
+		if err != nil {
+			t.Error(err)
+			done <- nil
+			return
+		}
+		done <- resp.ConfigOptions
+	}()
+	if _, err := f.Await(t.Context(), "thread/settings/update", 0); err != nil {
+		close(release)
+		t.Fatal(err)
+	}
+	_, err := h.conn.SetSessionMode(t.Context(), &acp.SetSessionModeRequest{SessionID: acp.SessionID(sid), ModeID: "read-only"})
+	close(release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cur []string
+	for _, o := range <-done {
+		cur = append(cur, string(o.Select.CurrentValue))
+	}
+	if got := strings.Join(cur, " "); got != "read-only plan fake-model-1 medium" {
+		t.Errorf("options %s", got)
 	}
 }
 
