@@ -2,4 +2,4 @@ module github.com/afrase/codex-acp-go
 
 go 1.26.0
 
-require github.com/afrase/acp-go v0.4.0
+require github.com/afrase/acp-go v0.4.1
