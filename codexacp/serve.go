@@ -45,7 +45,6 @@ type agent struct {
 	cfg    Config
 	log    *slog.Logger
 	client *acp.ClientConn
-	out    *afterAnswer
 	ctx    context.Context //nolint:containedctx // ends with the client's connection
 	grace  time.Duration   // interruptGrace, as Serve began
 
@@ -77,8 +76,10 @@ func Serve(ctx context.Context, r io.Reader, w io.Writer, cfg Config) error {
 	actx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancel()
 	a.ctx = actx
-	a.out = &afterAnswer{w: w}
-	conn := acp.NewClientConn(r, a.out, func(c *acp.ClientConn) acp.Agent {
+	// Not w itself: the connection would close it as it ends, and a
+	// client that reads it until the agent exits would stop waiting while
+	// the sessions still close.
+	conn := acp.NewClientConn(r, struct{ io.Writer }{w}, func(c *acp.ClientConn) acp.Agent {
 		a.client = c
 		return a
 	}, acp.WithReadLimit(readLimit), acp.WithLogger(a.log))

@@ -123,7 +123,7 @@ func (a *agent) NewSession(ctx context.Context, req *acp.NewSessionRequest) (*ac
 		a.letGo(ctx, s.id)
 		return nil, err
 	}
-	a.out.after(s.id, func() { s.commands(a.ctx, false) })
+	acp.AfterResponse(ctx, func() { s.commands(a.ctx, false) }) // a client takes a session's updates once it knows its id
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return &acp.NewSessionResponse{SessionID: acp.SessionID(s.id), Modes: s.settings.modeState(), ConfigOptions: s.settings.options()}, nil

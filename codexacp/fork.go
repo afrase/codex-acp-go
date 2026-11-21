@@ -36,7 +36,7 @@ func (a *agent) ForkSession(ctx context.Context, req *acp.ForkSessionRequest) (*
 		a.letGo(ctx, opened.Thread.ID)
 		return nil, err
 	}
-	a.out.after(s.id, func() { s.commands(a.ctx, false) })
+	acp.AfterResponse(ctx, func() { s.commands(a.ctx, false) })
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return &acp.ForkSessionResponse{SessionID: acp.SessionID(s.id), Modes: s.settings.modeState(), ConfigOptions: s.settings.options()}, nil
