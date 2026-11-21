@@ -154,14 +154,42 @@ func (h *harness) waitSent(method string, n int) {
 
 // logBuffer is the agent's log, as text.
 type logBuffer struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
+	mu   sync.Mutex
+	buf  bytes.Buffer
+	more chan struct{} // signalled at each write, if not nil
 }
 
 func (b *logBuffer) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.more != nil {
+		select {
+		case b.more <- struct{}{}:
+		default:
+		}
+	}
 	return b.buf.Write(p)
+}
+
+// debugLog has the agent log at Debug into b, which it makes watchable.
+func debugLog(b *logBuffer) func(*Config) {
+	b.more = make(chan struct{}, 1)
+	return func(cfg *Config) {
+		cfg.Log = slog.New(slog.NewTextHandler(b, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	}
+}
+
+// waitLog waits until b, a debugLog's, holds text.
+func waitLog(t *testing.T, b *logBuffer, text string) {
+	t.Helper()
+	deadline := time.After(5 * time.Second) // bounds a hang, orders nothing
+	for !strings.Contains(b.String(), text) {
+		select {
+		case <-b.more:
+		case <-deadline:
+			t.Fatalf("no %q in the log", text)
+		}
+	}
 }
 
 func (b *logBuffer) String() string {

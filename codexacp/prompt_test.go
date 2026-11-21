@@ -506,3 +506,61 @@ func TestCancelQueuedPrompt(t *testing.T) {
 		t.Errorf("%d turns started, want 1", n)
 	}
 }
+
+// A prompt waiting for the running turn when the session closes, or is
+// loaded again, ends cancelled and starts no turn on it.
+func TestQueuedPromptAfterClose(t *testing.T) {
+	for _, how := range []string{"close", "load"} {
+		t.Run(how, func(t *testing.T) {
+			f := codex()
+			f.Turn("turn_1", "", delta("item/agentMessage/delta", "msg_1", "Hi"))
+			f.On("turn/interrupt", appservertest.Reply(map[string]any{}))
+			f.Then("turn/interrupt", func(json.RawMessage) {
+				f.Notify("turn/completed", map[string]any{"threadId": "thr_1", "turn": appservertest.TurnOf("turn_1", "interrupted")})
+			})
+			f.On("thread/resume", appservertest.Reply(appservertest.Opened(appservertest.Thread("thr_1", "/w/proj"))))
+			f.On("thread/items/list", appservertest.Reply(map[string]any{"data": []any{}, "nextCursor": nil}))
+			var log logBuffer
+			h := initialized(t, f, debugLog(&log))
+			sid := h.session()
+			type result struct {
+				resp *acp.PromptResponse
+				err  error
+			}
+			prompt := func() chan result {
+				done := make(chan result, 1)
+				go func() {
+					resp, err := h.conn.Prompt(context.Background(), &acp.PromptRequest{SessionID: acp.SessionID(sid), Prompt: []acp.ContentBlock{textBlock("go")}})
+					done <- result{resp, err}
+				}()
+				return done
+			}
+			first := prompt()
+			h.waitUpdates(1) // the first prompt's turn runs
+			second := prompt()
+			waitLog(t, &log, "a prompt waits for the turn before it")
+			var err error
+			if how == "close" {
+				_, err = h.conn.CloseSession(t.Context(), &acp.CloseSessionRequest{SessionID: acp.SessionID(sid)})
+			} else {
+				_, err = h.conn.LoadSession(t.Context(), &acp.LoadSessionRequest{SessionID: acp.SessionID(sid), Cwd: "/w/proj", MCPServers: []acp.MCPServer{}})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i, done := range []chan result{first, second} {
+				select {
+				case r := <-done:
+					if r.err != nil || r.resp.StopReason != acp.StopReasonCancelled {
+						t.Errorf("prompt %d: %v, %v", i+1, r.resp, r.err)
+					}
+				case <-time.After(5 * time.Second): // bounds a hang, orders nothing
+					t.Fatalf("prompt %d didn't end", i+1)
+				}
+			}
+			if n := len(f.Calls("turn/start")); n != 1 {
+				t.Errorf("%d turns started, want 1", n)
+			}
+		})
+	}
+}

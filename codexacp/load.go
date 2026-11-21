@@ -111,6 +111,7 @@ func (a *agent) forget(s *session) {
 		a.forgetChildren(s.id)
 	}
 	a.mu.Unlock()
+	s.end(errors.New("session not opened"))
 }
 
 // replayHistory sends the thread's title and its items: a paginated

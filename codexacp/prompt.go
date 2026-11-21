@@ -64,7 +64,8 @@ func sequence(ctx context.Context) uint64 {
 
 // prompt runs a turn for the seq-th of the client's messages: a
 // session/cancel that came after it, while it was still setting up or
-// waiting for the turn before it, ends it cancelled before it starts.
+// waiting for the turn before it, ends it cancelled before it starts, as
+// does the session's close or a load of it again.
 func (a *agent) prompt(ctx context.Context, seq uint64, req *acp.PromptRequest) (*acp.PromptResponse, error) {
 	s, err := a.session(req.SessionID)
 	if err != nil {
@@ -83,7 +84,7 @@ func (a *agent) prompt(ctx context.Context, seq uint64, req *acp.PromptRequest) 
 	defer func() { <-s.prompting }()
 
 	s.mu.Lock()
-	if seq < s.cancelSeq {
+	if s.closed || seq < s.cancelSeq {
 		s.mu.Unlock()
 		return &acp.PromptResponse{StopReason: acp.StopReasonCancelled}, nil
 	}
@@ -161,14 +162,25 @@ func (a *agent) prompt(ctx context.Context, seq uint64, req *acp.PromptRequest) 
 
 // waitTurn takes the session's one turn for the seq-th of the client's
 // messages, once the turn before it has ended: false, with no error, when
-// a session/cancel that came after it ends it first.
+// a session/cancel that came after it, or the session's close, ends it
+// first.
 func (s *session) waitTurn(ctx context.Context, seq uint64) (bool, error) {
+	waited := false
 	for {
 		s.mu.Lock()
-		cancelled, wake := seq < s.cancelSeq, s.cancels
+		cancelled, wake := s.closed || seq < s.cancelSeq, s.wake
 		s.mu.Unlock()
 		if cancelled {
 			return false, nil
+		}
+		select {
+		case s.prompting <- struct{}{}:
+			return true, nil
+		default:
+		}
+		if !waited {
+			waited = true
+			s.a.log.Debug("a prompt waits for the turn before it", "session", s.id)
 		}
 		select {
 		case s.prompting <- struct{}{}:
@@ -277,8 +289,7 @@ func (a *agent) Cancel(ctx context.Context, n *acp.CancelNotification) error {
 	seq, _ := acp.SequenceFromContext(ctx)
 	s.mu.Lock()
 	s.cancelSeq = max(s.cancelSeq, seq)
-	close(s.cancels)
-	s.cancels = make(chan struct{})
+	s.wakeLocked()
 	t := s.turn
 	s.mu.Unlock()
 	if t != nil {
@@ -344,6 +355,22 @@ func (t *turn) interruptSent(ctx context.Context) {
 	}
 }
 
+// closeLocked marks the session closed: the prompts waiting end
+// cancelled, and none starts a turn; s.mu is held.
+func (s *session) closeLocked() {
+	if !s.closed {
+		s.closed = true
+		s.wakeLocked()
+	}
+}
+
+// wakeLocked has the prompts waiting for the session's turn look again;
+// s.mu is held.
+func (s *session) wakeLocked() {
+	close(s.wake)
+	s.wake = make(chan struct{})
+}
+
 // interrupted says the turn id was interrupted.
 func (s *session) interrupted(id string) bool {
 	s.mu.Lock()
@@ -351,10 +378,11 @@ func (s *session) interrupted(id string) bool {
 	return id != "" && s.stale[id]
 }
 
-// end ends the session's prompt, if one runs: the session closed or the
-// agent stopped.
+// end ends the session's prompt, if one runs, and the prompts waiting:
+// the session closed or was opened again, or the agent stopped.
 func (s *session) end(error) {
 	s.mu.Lock()
+	s.closeLocked()
 	t := s.turn
 	s.mu.Unlock()
 	if t != nil {
