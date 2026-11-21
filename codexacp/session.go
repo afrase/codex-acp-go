@@ -139,6 +139,7 @@ func (a *agent) CloseSession(ctx context.Context, req *acp.CloseSessionRequest) 
 		case <-ctx.Done():
 		case <-a.ctx.Done():
 		}
+		t.interruptSent(ctx)
 	}
 	s.end(fmt.Errorf("session %s closed", s.id))
 	if err := a.call(ctx, "thread/unsubscribe", appserver.ThreadID{ThreadID: s.id}, nil); err != nil {

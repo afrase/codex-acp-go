@@ -24,9 +24,13 @@ type turn struct {
 	once   sync.Once
 	known  chan struct{} // closed once Codex says the turn's id
 	done   chan struct{} // closed when the prompt returns
-	// stop sends turn/interrupt once; a second caller waits until it is
-	// answered, so what it sends next comes after.
-	stop sync.Once
+	// stop sends turn/interrupt once, on a goroutine of its own: Cancel
+	// runs on the goroutine reading the client, which must never wait on
+	// Codex. stopped is closed once Codex has answered it, or
+	// interruptGrace after it was sent, for a caller whose next call must
+	// come after it.
+	stop    sync.Once
+	stopped chan struct{}
 	// late is closed interruptGrace after the turn was cancelled: Codex
 	// hasn't ended it, and the prompt ends without its turn/completed.
 	late     chan struct{}
@@ -70,7 +74,7 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 	}
 	tctx, cancel := context.WithCancel(a.ctx)
 	t := &turn{ctx: tctx, cancel: cancel, gone: make(chan struct{}), known: make(chan struct{}), done: make(chan struct{}), late: make(chan struct{}),
-		ended: make(chan appserver.Turn, 1), early: map[string]appserver.Turn{}, usage: tokens{start: s.total}}
+		stopped: make(chan struct{}), ended: make(chan appserver.Turn, 1), early: map[string]appserver.Turn{}, usage: tokens{start: s.total}}
 	s.turn = t
 	s.mu.Unlock()
 	defer func() {
@@ -107,6 +111,9 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 	case end = <-t.ended:
 	case <-ctx.Done():
 		s.interrupt(t)
+		if a.client.Err() == nil { // withdrawn: the next prompt's turn/start comes after the interrupt
+			t.interruptSent(context.WithoutCancel(ctx)) // bounded by the grace
+		}
 		return nil, ctx.Err()
 	case <-t.gone: // closed mid-turn (interrupted first): cancelled, as codex-acp ends it
 		closed = true
@@ -234,7 +241,11 @@ func (a *agent) Cancel(_ context.Context, n *acp.CancelNotification) error {
 // interrupt cancels t: its questions to the user are withdrawn (Codex is
 // told cancel), and Codex interrupts the turn once its id is known; the
 // prompt then ends cancelled at turn/completed, or interruptGrace after
-// the cancel if that never comes.
+// the cancel if that never comes. It doesn't wait for Codex: turn/interrupt
+// goes on a goroutine of its own, and t.stopped is closed once Codex has
+// answered it or interruptGrace has passed.
+//
+//nolint:contextcheck // turn/interrupt is bound to the agent's life and the grace, not to the caller's request
 func (s *session) interrupt(t *turn) {
 	t.mu.Lock()
 	t.cancelled = true
@@ -259,10 +270,29 @@ func (s *session) interrupt(t *turn) {
 		return
 	}
 	t.stop.Do(func() {
-		if err := s.a.call(s.a.ctx, "turn/interrupt", appserver.TurnInterruptParams{ThreadID: s.id, TurnID: id}, nil); err != nil {
-			s.a.log.Warn("turn not interrupted", "session", s.id, "err", err)
-		}
+		go func() {
+			defer close(t.stopped)
+			ctx, cancel := context.WithTimeout(s.a.ctx, s.a.grace)
+			defer cancel()
+			if err := s.a.call(ctx, "turn/interrupt", appserver.TurnInterruptParams{ThreadID: s.id, TurnID: id}, nil); err != nil {
+				s.a.log.Warn("turn not interrupted", "session", s.id, "err", err)
+			}
+		}()
 	})
+}
+
+// interruptSent waits until Codex has answered t's turn/interrupt, or
+// given up on it; a turn whose id isn't known has sent none.
+func (t *turn) interruptSent(ctx context.Context) {
+	select {
+	case <-t.known:
+	default:
+		return
+	}
+	select {
+	case <-t.stopped:
+	case <-ctx.Done():
+	}
 }
 
 // interrupted says the turn id was interrupted.

@@ -381,3 +381,83 @@ func TestUnreadTurnStart(t *testing.T) {
 		t.Errorf("turn/interrupt %s", got)
 	}
 }
+
+// A cancel doesn't wait for Codex to answer turn/interrupt: the client's
+// next request is answered while the interrupt is still unanswered.
+func TestCancelDoesNotWaitForInterrupt(t *testing.T) {
+	f := codex()
+	release := make(chan struct{})
+	f.On("turn/interrupt", func(json.RawMessage) (any, error) {
+		<-release
+		return map[string]any{}, nil
+	})
+	f.Then("turn/interrupt", func(json.RawMessage) {
+		f.Notify("turn/completed", map[string]any{"threadId": "thr_1", "turn": appservertest.TurnOf("turn_1", "interrupted")})
+	})
+	f.Turn("turn_1", "", delta("item/agentMessage/delta", "msg_1", "Hi")) // the update says turn/started was handled
+	h := initialized(t, f)
+	released := false
+	t.Cleanup(func() {
+		if !released {
+			close(release)
+		}
+	})
+	sid := h.session()
+	done := make(chan *acp.PromptResponse, 1)
+	go func() {
+		resp, err := h.conn.Prompt(context.Background(), &acp.PromptRequest{SessionID: acp.SessionID(sid), Prompt: []acp.ContentBlock{textBlock("go")}})
+		if err != nil {
+			t.Error(err)
+		}
+		done <- resp
+	}()
+	if _, err := f.Await(t.Context(), "turn/start", 0); err != nil {
+		t.Fatal(err)
+	}
+	h.waitUpdates(1)
+	if err := h.conn.Cancel(t.Context(), &acp.CancelNotification{SessionID: acp.SessionID(sid)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Await(t.Context(), "turn/interrupt", 0); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second) // bounds a hang, orders nothing
+	defer cancel()
+	if _, err := h.conn.SetSessionMode(ctx, &acp.SetSessionModeRequest{SessionID: acp.SessionID(sid), ModeID: "read-only"}); err != nil {
+		t.Fatalf("a request after the cancel: %v", err)
+	}
+	released = true
+	close(release)
+	if resp := <-done; resp == nil || resp.StopReason != acp.StopReasonCancelled {
+		t.Errorf("prompt %v", resp)
+	}
+}
+
+// The client going mid-turn ends Serve though Codex never answers
+// turn/interrupt.
+func TestDisconnectDoesNotWaitForInterrupt(t *testing.T) {
+	f := codex()
+	release := make(chan struct{})
+	f.On("turn/interrupt", func(json.RawMessage) (any, error) {
+		<-release
+		return map[string]any{}, nil
+	})
+	f.Turn("turn_1", "", delta("item/agentMessage/delta", "msg_1", "Hi")) // the update says turn/started was handled
+	h := initialized(t, f)
+	t.Cleanup(func() { close(release) })
+	sid := h.session()
+	go func() {
+		_, _ = h.conn.Prompt(context.Background(), &acp.PromptRequest{SessionID: acp.SessionID(sid), Prompt: []acp.ContentBlock{textBlock("go")}})
+	}()
+	if _, err := f.Await(t.Context(), "turn/start", 0); err != nil {
+		t.Fatal(err)
+	}
+	h.waitUpdates(1)
+	h.close()
+	select {
+	case err := <-h.done:
+		h.done <- err // for the harness's cleanup
+	case <-time.After(5 * time.Second): // bounds a hang, orders nothing
+		t.Fatal("Serve still waits on turn/interrupt")
+	}
+}
