@@ -2,7 +2,7 @@
 
 All notable changes to this module. It follows [Semantic Versioning](https://semver.org); until 1.0, a minor version may change the API.
 
-## v0.3.0 (unreleased)
+## v0.3.0 (2026-11-21)
 
 - `codexacp`: sign-in through ACP, as codex-acp offers it. `initialize` lists the `api-key` and `chat-gpt` auth methods (ChatGPT not with `NO_BROWSER` set), and `authenticate` has Codex sign in: with an API key from the request or `$CODEX_API_KEY` / `$OPENAI_API_KEY`, or with ChatGPT, whose page opens in the browser and whose login is cancelled when the client cancels the request. A failed login answers Authentication required ("Sign-in did not complete"). `Config.OpenURL` opens the page another way.
 - `appserver`: `LoginStartParams`, `LoginStartResponse`, `LoginCancelParams` and `LoginCompleted` type the account login messages; `AccountReadResponse.AccountType` is the login's type.
