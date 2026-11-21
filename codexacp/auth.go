@@ -201,6 +201,19 @@ func (a *agent) openURL(ctx context.Context, page string) error {
 	return open(ctx, page)
 }
 
+// openBrowser opens page in the user's default browser. The opener
+// outlives the request, and runs detached from the agent's process group,
+// so a client that ends that group once signed in doesn't end the
+// browser the opener may have become.
+func openBrowser(ctx context.Context, page string) error {
+	return launch(browserOpener(ctx, page))
+}
+
+// browserOpener is the command openBrowser starts.
+func browserOpener(ctx context.Context, page string) *exec.Cmd {
+	return detach(browserCommand(ctx, page))
+}
+
 // launch starts a program that opens a page, and doesn't wait for it.
 func launch(cmd *exec.Cmd) error {
 	if err := cmd.Start(); err != nil {

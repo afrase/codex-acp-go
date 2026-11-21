@@ -26,7 +26,7 @@ type Config struct {
 	// OpenURL opens a page in the user's browser: ChatGPT's sign-in page,
 	// when the client asks to sign in that way. nil = the system's
 	// browser (open on macOS, xdg-open elsewhere on Unix, the URL handler
-	// on Windows).
+	// on Windows), the opener in a session of its own on Unix.
 	OpenURL func(ctx context.Context, url string) error
 }
 

@@ -116,8 +116,10 @@ The login is Codex's own and lands where `codex login` puts it. For
 - A client that cancels the request (`$/cancel_request`) or disconnects
   cancels the login. A second `authenticate` ends the first.
 - The agent opens the page with `open` on macOS, `xdg-open` on other Unix
-  systems, and the URL handler on Windows. A program that embeds the agent
-  can set `Config.OpenURL` instead.
+  systems, and the URL handler on Windows. On Unix the opener runs in a
+  session of its own, so a client that ends the agent's process group
+  doesn't close the browser with it. A program that embeds the agent can
+  set `Config.OpenURL` instead.
 
 Device-code sign-in and custom model gateways, which codex-acp also
 offers, are not supported yet.
