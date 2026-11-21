@@ -26,15 +26,11 @@ type tools struct {
 	changes  map[string]appserver.Item
 	sources  map[string]string   // started commands' sources
 	mcp      map[string][]string // running MCP calls by server, which an approval names
-	initDone bool
 }
 
-func (t *tools) init() {
-	if !t.initDone {
-		t.terminal, t.streamed, t.thoughts, t.viewed = map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}
-		t.changes, t.sources, t.mcp = map[string]appserver.Item{}, map[string]string{}, map[string][]string{}
-		t.initDone = true
-	}
+func newTools() *tools {
+	return &tools{terminal: map[string]bool{}, streamed: map[string]bool{}, thoughts: map[string]bool{}, viewed: map[string]bool{},
+		changes: map[string]appserver.Item{}, sources: map[string]string{}, mcp: map[string][]string{}}
 }
 
 // thought notes a reasoning that came in pieces: its whole text at its
@@ -42,7 +38,6 @@ func (t *tools) init() {
 func (t *tools) thought(id string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.init()
 	t.thoughts[id] = true
 }
 
@@ -50,7 +45,6 @@ func (t *tools) thought(id string) {
 func (t *tools) turnEnded() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.init()
 	clear(t.changes)
 	clear(t.sources)
 	clear(t.mcp)
@@ -62,7 +56,6 @@ func (t *tools) turnEnded() {
 func (t *tools) pendingMCP(server string) string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.init()
 	ids := t.mcp[server]
 	if len(ids) != 1 {
 		return ""
@@ -71,12 +64,16 @@ func (t *tools) pendingMCP(server string) string {
 	return ids[0]
 }
 
-// observe notes a subagent's item that an approval may name: a
-// command's source, a change's files, a running MCP call.
+// observe notes a subagent's item that an approval may name.
 func (t *tools) observe(started bool, it appserver.Item) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.init()
+	t.note(started, it)
+}
+
+// note keeps what an approval may name of an item: a command's source, a
+// change's files, a running MCP call; t.mu is held.
+func (t *tools) note(started bool, it appserver.Item) {
 	switch it.Type {
 	case "commandExecution":
 		if started {
@@ -103,7 +100,7 @@ func (t *tools) observe(started bool, it appserver.Item) {
 func (t *tools) item(started bool, it appserver.Item) []acp.SessionUpdate {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.init()
+	t.note(started, it)
 	switch it.Type {
 	case "commandExecution":
 		if started {
@@ -112,11 +109,9 @@ func (t *tools) item(started bool, it appserver.Item) []acp.SessionUpdate {
 		return []acp.SessionUpdate{t.commandCompleted(it)}
 	case "fileChange":
 		if started {
-			t.changes[it.ID] = it
 			return []acp.SessionUpdate{call(acp.ToolCall{ToolCallID: acp.ToolCallID(it.ID), Title: "Editing files", Kind: "edit",
 				Status: status(it.Status), Content: diffs(it.Changes)})}
 		}
-		delete(t.changes, it.ID)
 		return []acp.SessionUpdate{callUpdate(acp.ToolCallUpdate{ToolCallID: acp.ToolCallID(it.ID), Status: endStatus(it.Status)})}
 	case "reasoning":
 		if started {
@@ -150,11 +145,6 @@ func (t *tools) item(started bool, it appserver.Item) []acp.SessionUpdate {
 func (t *tools) other(started bool, it appserver.Item) []acp.SessionUpdate {
 	switch it.Type {
 	case "mcpToolCall":
-		if started {
-			t.mcp[it.Server] = append(t.mcp[it.Server], it.ID)
-		} else {
-			t.mcp[it.Server] = slices.DeleteFunc(t.mcp[it.Server], func(id string) bool { return id == it.ID })
-		}
 		input := raw(map[string]any{"server": it.Server, "tool": it.Tool, "arguments": it.Arguments})
 		meta := map[string]any{"is_mcp_tool_call": true}
 		if started {
@@ -214,7 +204,7 @@ func (t *tools) other(started bool, it appserver.Item) []acp.SessionUpdate {
 func (t *tools) commandStarted(it appserver.Item) acp.SessionUpdate {
 	a := action(it)
 	terminal := a.Type == "unknown"
-	t.terminal[it.ID], t.sources[it.ID] = terminal, it.Source
+	t.terminal[it.ID] = terminal
 	delete(t.streamed, it.ID)
 	c := acp.ToolCall{ToolCallID: acp.ToolCallID(it.ID), Name: commandName(it.Source), Status: status(it.Status)}
 	switch a.Type {
@@ -248,7 +238,6 @@ func (t *tools) commandCompleted(it appserver.Item) acp.SessionUpdate {
 	streamed := t.streamed[it.ID]
 	delete(t.terminal, it.ID)
 	delete(t.streamed, it.ID)
-	delete(t.sources, it.ID)
 	u := acp.ToolCallUpdate{ToolCallID: acp.ToolCallID(it.ID), Name: commandName(it.Source), Status: endStatus(it.Status)}
 	meta := map[string]any{}
 	if out := deref(it.AggregatedOutput); out != "" && !streamed {
@@ -270,7 +259,6 @@ func (t *tools) commandCompleted(it appserver.Item) acp.SessionUpdate {
 func (t *tools) progress(method string, d appserver.Delta) (acp.SessionUpdate, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.init()
 	var meta map[string]any
 	switch method {
 	case "item/commandExecution/outputDelta":

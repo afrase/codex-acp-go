@@ -36,11 +36,11 @@ type session struct {
 	asks      int                   // MCP questions asked with no call of their own, for their calls' ids
 	published string                // the commands sent last, as JSON
 	stale     map[string]bool       // the turns interrupted, by id
-	tools     tools
+	tools     *tools
 }
 
 func newSession(a *agent, id, cwd string) *session {
-	return &session{a: a, id: id, cwd: cwd, prompting: make(chan struct{}, 1), wake: make(chan struct{}), settings: settings{mode: defaultMode, collab: "default"}}
+	return &session{a: a, id: id, cwd: cwd, tools: newTools(), prompting: make(chan struct{}, 1), wake: make(chan struct{}), settings: settings{mode: defaultMode, collab: "default"}}
 }
 
 // update sends the client one of the session's updates.

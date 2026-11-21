@@ -100,7 +100,6 @@ func (s *session) approveCommand(ctx context.Context, p appserver.CommandApprova
 		return appserver.Decision{Decision: "cancel"}
 	}
 	s.tools.mu.Lock()
-	s.tools.init()
 	source, started := s.tools.sources[p.ItemID]
 	s.tools.mu.Unlock()
 	call := acp.ToolCallUpdate{ToolCallID: acp.ToolCallID(p.ItemID), Kind: "execute", Status: "pending", Title: permissionTitle(p.CommandActions)}
@@ -136,7 +135,6 @@ func (s *session) approveCommand(ctx context.Context, p appserver.CommandApprova
 // approveFileChange asks whether Codex may write the files of a change.
 func (s *session) approveFileChange(ctx context.Context, p appserver.FileChangeApproval) appserver.Decision {
 	s.tools.mu.Lock()
-	s.tools.init()
 	item := s.tools.changes[p.ItemID]
 	s.tools.mu.Unlock()
 	call := acp.ToolCallUpdate{ToolCallID: acp.ToolCallID(p.ItemID), Kind: "edit", Status: "pending", Title: "Edit files"}

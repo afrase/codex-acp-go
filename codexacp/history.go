@@ -16,7 +16,7 @@ import (
 // their item ids, thoughts, and each tool call as it ended. Permission
 // requests and questions aren't in the history.
 func replay(it appserver.Item) []acp.SessionUpdate {
-	var h tools
+	h := newTools()
 	switch it.Type {
 	case "userMessage":
 		var out []acp.SessionUpdate
