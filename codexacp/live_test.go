@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -537,4 +539,48 @@ func TestLiveCloseMidTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	l.prompt(sid, "Reply with exactly: again")
+}
+
+// A Codex with no login refuses a session, and its ChatGPT sign-in gives
+// a page to open; cancelling the request leaves the agent answering.
+func TestLiveSignInOpensAPage(t *testing.T) {
+	codex, _ := liveEnv(t)
+	home := t.TempDir() // no config and no login
+	opened := make(chan string, 1)
+	wire := &wireLog{}
+	h := serveLive(t, Config{CodexPath: codex, Env: append(os.Environ(), "CODEX_HOME="+home), Spawn: wire.spawn,
+		OpenURL: func(_ context.Context, page string) error { opened <- page; return nil }}, wire)
+	t.Cleanup(func() { wire.save(t) })
+	refused := func() {
+		t.Helper()
+		_, err := h.conn.NewSession(t.Context(), &acp.NewSessionRequest{Cwd: t.TempDir()})
+		if e, ok := errors.AsType[*acp.Error](err); !ok || e.Code != acp.ErrorCodeAuthenticationRequired {
+			t.Fatalf("session/new without a login: %v", err)
+		}
+	}
+	refused()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := h.conn.Authenticate(ctx, &acp.AuthenticateRequest{MethodID: authChatGPT})
+		done <- err
+	}()
+	select {
+	case page := <-opened:
+		u, err := url.Parse(page)
+		if err != nil || u.Scheme != "https" || u.Host == "" {
+			t.Fatalf("the sign-in page isn't an https page (host %q): %v", u.Host, err)
+		}
+		t.Logf("sign-in page on %s", u.Host)
+	case err := <-done:
+		t.Fatalf("authenticate ended with no page: %v", err)
+	case <-time.After(time.Minute):
+		t.Fatal("no sign-in page within a minute")
+	}
+	cancel()
+	if err := <-done; err == nil {
+		t.Fatal("a cancelled sign-in succeeded")
+	}
+	refused()
 }
