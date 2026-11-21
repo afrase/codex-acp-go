@@ -217,6 +217,22 @@ func TestOnlyStandardLibraryAndACP(t *testing.T) {
 	}
 }
 
+// appserver and appservertest use only the standard library, as the
+// package says: not even acp-go.
+func TestAppServerOnlyStandardLibrary(t *testing.T) {
+	out, err := exec.CommandContext(t.Context(), "go", "list", "-deps", "-test", "github.com/afrase/codex-acp-go/appserver/...").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for p := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
+		first, _, _ := strings.Cut(p, "/")
+		if !strings.Contains(first, ".") || strings.HasPrefix(p, "github.com/afrase/codex-acp-go/appserver") { // its tests' packages too
+			continue
+		}
+		t.Errorf("imports %s", p)
+	}
+}
+
 func jsonOf(t *testing.T, v any) string {
 	t.Helper()
 	b, err := json.Marshal(v)
