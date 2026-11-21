@@ -7,6 +7,8 @@ All notable changes to this module. It follows [Semantic Versioning](https://sem
 No API change.
 
 - `codexacp`: plan-mode questions are built with acp-go's typed elicitation (`CreateElicitation`, `ElicitationProperties`), which keeps the fields' order as before. An answer to an MCP server's form, or to the questions, whose values aren't strings, numbers, booleans or string arrays (as ACP's `ElicitationContentValue` allows) is now taken as cancel, where it was passed on to Codex.
+- `appserver`, `codexacp`: smaller internals (one helper each for a message's thread and turn ids, a session's tool state made with it, the handler's queue run without a second goroutine), with no change in behaviour.
+- Tests: `TestTurnEnds` and `TestFileChangeApproval` no longer race the fake app-server's script.
 
 ## v0.3.2 (2026-11-21)
 
