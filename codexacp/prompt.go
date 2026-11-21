@@ -223,7 +223,8 @@ func (s *session) startTurn(ctx context.Context, t *turn, params appserver.TurnS
 	return nil, ctx.Err()
 }
 
-// turnID is the turn's id in turn/start's answer, "" if it has none.
+// turnID is the turn's id in turn/start's answer or a turn/started or
+// turn/completed, "" if it has none.
 func turnID(answer json.RawMessage) string {
 	var id struct {
 		Turn struct {

@@ -20,15 +20,11 @@ func (s *session) notified(method string, params json.RawMessage) {
 		var n appserver.TurnNotification
 		if !s.decode(method, params, &n) {
 			// The turn's id alone still starts or ends the prompt's turn.
-			var id struct {
-				Turn struct {
-					ID string `json:"id"`
-				} `json:"turn"`
-			}
-			if json.Unmarshal(params, &id) != nil || id.Turn.ID == "" {
+			id := turnID(params)
+			if id == "" {
 				return
 			}
-			n.Turn = appserver.Turn{ID: id.Turn.ID}
+			n.Turn = appserver.Turn{ID: id}
 		}
 		if method == "turn/completed" {
 			s.tools.turnEnded()
