@@ -68,7 +68,12 @@ func TestFileChangeApproval(t *testing.T) {
 		f.Notify("turn/completed", map[string]any{"threadId": "thr_1", "turn": appservertest.TurnOf("turn_1", "completed")})
 	})
 	h := initialized(t, f)
-	h.c.permit = pick("allow_for_session")
+	h.c.permit = func(r *acp.RequestPermissionRequest) (*acp.RequestPermissionResponse, error) {
+		if r.ToolCall.ToolCallID == "call_3" {
+			return pick("decline")(r)
+		}
+		return pick("allow_for_session")(r)
+	}
 	sid := h.session()
 	go func() {
 		_, _ = h.conn.Prompt(context.Background(), &acp.PromptRequest{SessionID: acp.SessionID(sid), Prompt: []acp.ContentBlock{textBlock("edit")}})
@@ -82,9 +87,6 @@ func TestFileChangeApproval(t *testing.T) {
 	if got := jsonOf(t, h.waitAsked(1)); got != want {
 		t.Errorf("asked\n%s\nwant\n%s", got, want)
 	}
-	h.c.mu.Lock()
-	h.c.permit = pick("decline")
-	h.c.mu.Unlock()
 	if got := <-answers; got != `{"decision":"decline"}` {
 		t.Errorf("read answered %s", got)
 	}

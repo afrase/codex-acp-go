@@ -161,9 +161,12 @@ func TestTurnEnds(t *testing.T) {
 		f.Notify("turn/completed", map[string]any{"threadId": "thr_1", "turn": appservertest.TurnOf("turn_9", "completed")})
 		return map[string]any{"turn": appservertest.TurnOf("turn_9", "inProgress")}, nil
 	})
+	replied := make(chan struct{}) // the next turn's script isn't this answer's
+	f.Then("turn/start", func(json.RawMessage) { close(replied) })
 	if resp, err := prompt(); err != nil || resp.StopReason != acp.StopReasonEndTurn {
 		t.Errorf("ended before its answer: %v, %v", resp, err)
 	}
+	<-replied
 	failed := appservertest.TurnOf("turn_1", "failed")
 	failed["error"] = map[string]any{"message": "boom", "codexErrorInfo": "other"}
 	f.Turn("turn_1", "", note{Method: "error", Params: map[string]any{"threadId": "thr_1", "turnId": "turn_1", "willRetry": true, "error": map[string]any{"message": "retrying"}}},
