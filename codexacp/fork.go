@@ -33,7 +33,7 @@ func (a *agent) ForkSession(ctx context.Context, req *acp.ForkSessionRequest) (*
 	}
 	s := newSession(a, opened.Thread.ID, req.Cwd)
 	if err := a.open(ctx, s, opened); err != nil {
-		_ = a.call(ctx, "thread/unsubscribe", appserver.ThreadID{ThreadID: opened.Thread.ID}, nil) // let go of the fork that failed
+		a.letGo(ctx, opened.Thread.ID)
 		return nil, err
 	}
 	a.out.after(s.id, func() { s.commands(a.ctx, false) })

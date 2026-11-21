@@ -25,6 +25,9 @@ func (a *agent) LoadSession(ctx context.Context, req *acp.LoadSessionRequest) (*
 	}
 	if err := s.replayHistory(ctx, opened, materialized); err != nil {
 		a.forget(s)
+		if materialized {
+			a.letGo(ctx, s.id)
+		}
 		return nil, err
 	}
 	s.commands(ctx, false)
@@ -80,6 +83,9 @@ func (a *agent) reopen(ctx context.Context, id, cwd string, servers []acp.MCPSer
 	}
 	s := newSession(a, id, cwd)
 	if err := a.open(ctx, s, opened); err != nil {
+		if materialized {
+			a.letGo(ctx, id)
+		}
 		return nil, opened, false, err
 	}
 	return s, opened, materialized, nil
@@ -101,6 +107,17 @@ func errorDetails(err error) string {
 		return d.Details
 	}
 	return e.Message
+}
+
+// letGo unsubscribes from a thread whose session failed to open, even
+// once the request has been withdrawn: otherwise its notifications and
+// requests would come, for no session, until the connection ends.
+func (a *agent) letGo(ctx context.Context, thread string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cancelGrace)
+	defer cancel()
+	if err := a.call(ctx, "thread/unsubscribe", appserver.ThreadID{ThreadID: thread}, nil); err != nil {
+		a.log.Debug("thread not unsubscribed", "thread", thread, "err", err)
+	}
 }
 
 // forget lets go of a session whose opening failed.

@@ -117,6 +117,7 @@ func (a *agent) NewSession(ctx context.Context, req *acp.NewSessionRequest) (*ac
 	s := newSession(a, opened.Thread.ID, req.Cwd)
 	s.total = &appserver.TokenCount{} // a new thread has used nothing
 	if err := a.open(ctx, s, opened); err != nil {
+		a.letGo(ctx, s.id)
 		return nil, err
 	}
 	a.out.after(s.id, func() { s.commands(a.ctx, false) })

@@ -212,3 +212,27 @@ func TestLoadLegacySkipsBadItems(t *testing.T) {
 	check(t, h.updates(), `{"sessionUpdate":"session_info_update","title":"Named"}`,
 		`{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Fixed."},"messageId":"msg_1"}`)
 }
+
+// A session that fails to open once its thread is open lets go of the
+// thread: a new session whose models can't be listed, and a load whose
+// history can't be read.
+func TestFailedOpenUnsubscribes(t *testing.T) {
+	f := codex()
+	f.On("model/list", appservertest.Fail(-32603, "models unavailable", nil))
+	h := initialized(t, f)
+	if _, err := h.conn.NewSession(t.Context(), &acp.NewSessionRequest{Cwd: "/w/proj", MCPServers: []acp.MCPServer{}}); err == nil {
+		t.Fatal("a new session opened without models")
+	}
+	f.On("model/list", appservertest.Reply(appservertest.Models()))
+	opened := appservertest.Opened(appservertest.Thread("thr_7", "/w/proj"))
+	opened["itemsBackwardsCursor"] = "after_cc_1"
+	f.On("thread/resume", appservertest.Reply(opened))
+	f.On("thread/items/list", appservertest.Fail(-32603, "history unavailable", nil))
+	if _, err := h.conn.LoadSession(t.Context(), &acp.LoadSessionRequest{SessionID: "thr_7", Cwd: "/w/proj", MCPServers: []acp.MCPServer{}}); err == nil {
+		t.Fatal("a load replayed no history")
+	}
+	got := f.Calls("thread/unsubscribe")
+	if len(got) != 2 || string(got[0]) != `{"threadId":"thr_1"}` || string(got[1]) != `{"threadId":"thr_7"}` {
+		t.Errorf("unsubscribe %s", got)
+	}
+}
