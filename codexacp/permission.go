@@ -31,13 +31,7 @@ func (s *session) asked(ctx context.Context, method string, params json.RawMessa
 		var stop context.CancelFunc
 		ctx, stop = context.WithCancel(ctx)
 		defer stop()
-		go func() {
-			select {
-			case <-t.ctx.Done():
-				stop()
-			case <-ctx.Done():
-			}
-		}()
+		defer context.AfterFunc(t.ctx, stop)()
 	}
 	switch method {
 	case "item/commandExecution/requestApproval":
