@@ -164,7 +164,7 @@ func (s *session) plan(params json.RawMessage) {
 // message id, as codex-acp sends them to a client without notices; a
 // warning of no thread goes to the sessions with a turn running.
 func (s *session) unthreaded(method string, params json.RawMessage) {
-	if threadOf(params) == "" && s.running() == nil {
+	if id, _ := threadID(params); id == "" && s.running() == nil {
 		return
 	}
 	var w appserver.WarningNotification

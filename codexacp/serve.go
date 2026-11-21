@@ -264,31 +264,23 @@ func (a *agent) update(sid string, u acp.SessionUpdate) {
 // router hands what the app-server sends to the session of its thread.
 type router struct{ a *agent }
 
-// threadOf is the threadId of a message's params, "" without one.
-func threadOf(params json.RawMessage) string {
+// threadID is the threadId of a message's params, "" without one.
+func threadID(params json.RawMessage) (string, error) {
 	var p struct {
-		ThreadID *string `json:"threadId"`
+		ThreadID string `json:"threadId"`
 	}
-	if json.Unmarshal(params, &p) != nil || p.ThreadID == nil {
-		return ""
-	}
-	return *p.ThreadID
+	err := json.Unmarshal(params, &p)
+	return p.ThreadID, err
 }
 
 // thread is the threadId of a message of method; params that don't
 // decode are logged, by the method, and have none.
 func (r router) thread(method string, params json.RawMessage) string {
-	var p struct {
-		ThreadID *string `json:"threadId"`
-	}
-	if err := json.Unmarshal(params, &p); err != nil {
+	id, err := threadID(params)
+	if err != nil {
 		r.a.log.Warn("a Codex message's thread can't be read", "method", method, "err", err)
-		return ""
 	}
-	if p.ThreadID == nil {
-		return ""
-	}
-	return *p.ThreadID
+	return id
 }
 
 func (r router) Notified(method string, params json.RawMessage) {
