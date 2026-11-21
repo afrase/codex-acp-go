@@ -31,7 +31,8 @@ func (s *session) asked(ctx context.Context, method string, params json.RawMessa
 		var stop context.CancelFunc
 		ctx, stop = context.WithCancel(ctx)
 		defer stop()
-		defer context.AfterFunc(t.ctx, stop)()
+		unwatch := context.AfterFunc(t.ctx, stop) //nolint:contextcheck // the turn's end withdraws the request too
+		defer unwatch()
 	}
 	switch method {
 	case "item/commandExecution/requestApproval":
