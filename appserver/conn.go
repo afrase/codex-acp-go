@@ -103,8 +103,6 @@ type Conn struct {
 	done   chan struct{}
 	ctx    context.Context //nolint:containedctx // the connection's life, for the server's requests
 	cancel context.CancelFunc
-
-	work chan func() // the handler's notifications and requests' starts, in order
 }
 
 // NewConn starts a connection reading r and writing w (the server's
@@ -115,12 +113,11 @@ func NewConn(r io.Reader, w io.Writer, h Handler, log *slog.Logger) *Conn {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &Conn{h: h, log: log, w: w, writes: make(chan writeReq), calls: map[string]chan message{}, done: make(chan struct{}),
-		ctx: ctx, cancel: cancel, work: make(chan func(), 1)}
-	q := &queue{}
+		ctx: ctx, cancel: cancel}
+	q := &queue{more: make(chan struct{}, 1)}
 	go c.writeLoop()
 	go c.read(r, q)
-	go q.run(c.work)
-	go c.handle()
+	go q.run()
 	return c
 }
 
@@ -334,13 +331,6 @@ func (c *Conn) answer(m message) {
 	}
 }
 
-// handle runs the queued work in order.
-func (c *Conn) handle() {
-	for f := range c.work {
-		f()
-	}
-}
-
 var errTooLong = errors.New("line too long")
 
 // readLine reads a line without its newline, at most MaxLine bytes;
@@ -370,8 +360,9 @@ func readLine(br *bufio.Reader) ([]byte, error) {
 	}
 }
 
-// queue is an unbounded queue of work, so reading never waits on the
-// handler (which may be making calls whose answers the reader takes).
+// queue is an unbounded queue of the handler's work (its notifications
+// and its requests' starts), so reading never waits on the handler
+// (which may be making calls whose answers the reader takes).
 type queue struct {
 	mu     sync.Mutex
 	items  []func()
@@ -394,29 +385,21 @@ func (q *queue) close() {
 }
 
 func (q *queue) signal() {
-	if q.more == nil {
-		q.more = make(chan struct{}, 1)
-	}
 	select {
 	case q.more <- struct{}{}:
 	default:
 	}
 }
 
-// run hands the queue's items to out in order, closing it once the
-// queue is closed and empty.
-func (q *queue) run(out chan<- func()) {
-	defer close(out)
+// run runs the queue's items in order until it is closed and empty.
+func (q *queue) run() {
 	for {
 		q.mu.Lock()
-		if q.more == nil {
-			q.more = make(chan struct{}, 1)
-		}
-		items, closed, more := q.items, q.closed, q.more
+		items, closed := q.items, q.closed
 		q.items = nil
 		q.mu.Unlock()
 		for _, f := range items {
-			out <- f
+			f()
 		}
 		if len(items) > 0 {
 			continue
@@ -424,6 +407,6 @@ func (q *queue) run(out chan<- func()) {
 		if closed {
 			return
 		}
-		<-more
+		<-q.more
 	}
 }
