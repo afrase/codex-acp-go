@@ -273,3 +273,54 @@ func TestSpawnerWithoutKillOrSaid(t *testing.T) {
 		}
 	}
 }
+
+// Under a provider other than Codex's own, model/list still names
+// OpenAI's models, which that provider doesn't serve: the session offers
+// the model the config names, and the thread's own when it is another,
+// so a thread left on a model the provider lacks can go back.
+func TestOtherProviderOffersTheConfigsModel(t *testing.T) {
+	const own = "accounts/vendor/models/own-1"
+	f := codex()
+	f.On("thread/start", func(json.RawMessage) (any, error) {
+		opened := appservertest.Opened(appservertest.Thread("thr_1", "/w/proj"))
+		opened["modelProvider"], opened["model"] = "vendor", "gpt-9-left"
+		return opened, nil
+	})
+	f.On("config/read", appservertest.Reply(map[string]any{"config": map[string]any{"model": own, "model_provider": "vendor"}}))
+	f.On("thread/settings/update", appservertest.Reply(map[string]any{}))
+	h := initialized(t, f)
+	resp, err := h.conn.NewSession(t.Context(), &acp.NewSessionRequest{Cwd: "/w/proj", MCPServers: []acp.MCPServer{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	models := func(opts []acp.SessionConfigOption) string {
+		var out []string
+		for _, o := range opts {
+			if o.ID != optModel {
+				continue
+			}
+			out = append(out, "current="+string(o.Select.CurrentValue))
+			for _, m := range o.Select.Options.Ungrouped {
+				out = append(out, string(m.Value)+"="+m.Name)
+			}
+		}
+		return strings.Join(out, " ")
+	}
+	if got, want := models(resp.ConfigOptions), "current=gpt-9-left gpt-9-left=9 Left "+own+"=own-1"; got != want {
+		t.Errorf("models %q, want %q", got, want)
+	}
+	set, err := h.conn.SetSessionConfigOption(t.Context(), &acp.SetSessionConfigOptionRequest{SessionID: resp.SessionID, ConfigID: optModel,
+		ValueID: &acp.SetSessionConfigOptionRequestValueID{Value: own}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := models(set.ConfigOptions), "current="+own+" "+own+"=own-1"; got != want {
+		t.Errorf("after the change, models %q, want %q", got, want)
+	}
+	if n := len(f.Calls("model/list")); n != 0 {
+		t.Errorf("model/list called %d times", n)
+	}
+	if got := string(f.Calls("config/read")[0]); !strings.Contains(got, `"/w/proj"`) {
+		t.Errorf("config/read %s, want the session's folder", got)
+	}
+}

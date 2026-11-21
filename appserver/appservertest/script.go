@@ -27,13 +27,13 @@ func Models() map[string]any {
 // Thread is a thread as the app-server sends it, made up.
 func Thread(id, cwd string) map[string]any {
 	return map[string]any{"id": id, "sessionId": id, "preview": "", "name": nil, "cwd": cwd, "createdAt": 1_700_000_000,
-		"updatedAt": 1_700_000_000, "historyMode": "paginated", "model": Model, "modelProvider": "fake", "reasoningEffort": "medium",
+		"updatedAt": 1_700_000_000, "historyMode": "paginated", "model": Model, "modelProvider": "openai", "reasoningEffort": "medium",
 		"ephemeral": false, "status": map[string]any{"type": "idle"}, "turns": []any{}, "source": "appServer", "cliVersion": "0.163.0"}
 }
 
 // Opened is thread/start's (and resume's, fork's) answer for thread.
 func Opened(thread map[string]any) map[string]any {
-	return map[string]any{"thread": thread, "model": Model, "modelProvider": "fake", "serviceTier": nil,
+	return map[string]any{"thread": thread, "model": Model, "modelProvider": "openai", "serviceTier": nil,
 		"reasoningEffort": "medium", "cwd": thread["cwd"], "approvalPolicy": "on-request", "approvalsReviewer": "user",
 		"sandbox": map[string]any{"type": "workspaceWrite"}, "itemsBackwardsCursor": nil, "collaborationMode": nil}
 }

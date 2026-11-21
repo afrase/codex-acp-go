@@ -176,7 +176,7 @@ func main() {
 | Prompts | Text, images, resource links and embedded resources. Cancel (Codex interrupts the turn). A second prompt waits for the running turn. |
 | Steering | A message sent during a turn joins it (`_session/steering`). With no turn running, it answers `promptRequired` when the client asks for that, or starts a turn. |
 | Modes | Read-only, Workspace access, Auto review (the default) and Full access, as codex-acp has them. |
-| Config options | Mode, collaboration mode (Default, Plan), model, and reasoning effort for a model that has levels. |
+| Config options | Mode, collaboration mode (Default, Plan), model, and reasoning effort for a model that has levels. Under a model provider other than OpenAI, the model offered is the one `config.toml` names. |
 | Turn output | Text and thoughts, streamed. Codex's to-do plan as a plan. Usage and the context window. The session's title. Codex's warnings, as text. |
 | Tool calls | Commands, with their output streamed (`_meta.terminal_output_delta`, `_meta.terminal_exit`). File edits, as diffs. MCP tool calls. Web search. Image views. Compaction. Subagent calls, as plain calls. |
 | Permissions | Every approval Codex asks for in an open session goes to the client: commands (with Codex's own choices, such as "don't ask again" for a command prefix), file edits, and MCP tool approvals. A subagent's approvals go to the session whose turn started it, as codex-acp sends them. The agent never allows anything itself. |

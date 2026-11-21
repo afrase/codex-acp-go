@@ -190,6 +190,21 @@ type ItemEntry struct {
 	Item   json.RawMessage `json:"item"`
 }
 
+// ConfigReadParams is config/read's: the folder the config is read
+// from, its project layers included.
+type ConfigReadParams struct {
+	Cwd string `json:"cwd,omitempty"`
+}
+
+// ConfigReadResponse is the config in effect, as far as this package
+// reads it.
+type ConfigReadResponse struct {
+	Config struct {
+		Model         string `json:"model"`
+		ModelProvider string `json:"model_provider"`
+	} `json:"config"`
+}
+
 // ModelListParams is model/list's.
 type ModelListParams struct {
 	Cursor *string `json:"cursor,omitempty"`

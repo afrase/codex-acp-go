@@ -47,14 +47,11 @@ func newSession(a *agent, id, cwd string) *session {
 func (s *session) update(u acp.SessionUpdate) { s.a.update(s.id, u) }
 
 // open registers the session once its thread is open, with the models
-// Codex offers and the thread's own model and effort.
+// it offers and the thread's own model and effort.
 func (a *agent) open(ctx context.Context, s *session, opened appserver.ThreadOpened) error {
-	models, err := a.models(ctx)
+	models, err := a.offered(ctx, s.cwd, opened.ModelProvider)
 	if err != nil {
 		return err
-	}
-	if len(models) == 0 {
-		return &acp.Error{Code: acp.ErrorCodeInternalError, Message: "Codex did not return any models"}
 	}
 	s.settings.models = models
 	s.settings.pick(opened.Model, opened.ReasoningEffort)
@@ -72,6 +69,36 @@ func (a *agent) open(ctx context.Context, s *session, opened appserver.ThreadOpe
 		old.end(errors.New("session opened again"))
 	}
 	return nil
+}
+
+// openAI is the id of Codex's own provider, whose models model/list
+// names.
+const openAI = "openai"
+
+// offered is the models a thread of provider offers: Codex's own list
+// under its own provider. Under any other, model/list still answers
+// with OpenAI's models, which that provider doesn't serve, so the
+// thread offers the model the config names from cwd and no more; the
+// thread's own model joins it in the options when it is another.
+func (a *agent) offered(ctx context.Context, cwd, provider string) ([]appserver.Model, error) {
+	if provider != "" && provider != openAI {
+		// A Codex without config/read, or a config naming no model,
+		// leaves read empty: the thread's own model alone.
+		var read appserver.ConfigReadResponse
+		_ = a.call(ctx, "config/read", appserver.ConfigReadParams{Cwd: cwd}, &read)
+		if read.Config.Model == "" {
+			return nil, nil
+		}
+		return []appserver.Model{{ID: read.Config.Model, DisplayName: read.Config.Model, IsDefault: true}}, nil
+	}
+	models, err := a.models(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(models) == 0 {
+		return nil, &acp.Error{Code: acp.ErrorCodeInternalError, Message: "Codex did not return any models"}
+	}
+	return models, nil
 }
 
 // models is every page of model/list.

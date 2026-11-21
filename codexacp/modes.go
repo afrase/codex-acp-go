@@ -144,9 +144,13 @@ func selectOption(id, name, description, category, current string, opts []acp.Se
 }
 
 // displayName is a model's name as codex-acp shows it: "gpt-5.5-codex"
-// as "5.5 Codex", any other as it is.
+// as "5.5 Codex". Any other is as it is, less the path another provider
+// names it under ("accounts/…/models/").
 func displayName(name string) string {
 	if !strings.HasPrefix(strings.ToLower(name), "gpt-") {
+		if i := strings.LastIndexByte(name, '/'); i >= 0 && i < len(name)-1 {
+			return name[i+1:]
+		}
 		return name
 	}
 	words := strings.FieldsFunc(name[4:], func(r rune) bool { return r == '-' || r == '/' })
