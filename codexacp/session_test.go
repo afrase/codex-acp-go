@@ -150,12 +150,18 @@ func TestSetOptionsAndClose(t *testing.T) {
 	}
 }
 
-// When Codex exits, the agent does: the client's connection ends.
+// When Codex exits, the agent does: the client's connection ends, and
+// Serve says why.
 func TestAppServerExit(t *testing.T) {
 	f := codex()
 	h := initialized(t, f)
 	f.Exit()
 	<-h.conn.Done()
+	err := <-h.done
+	h.done <- nil // for the harness's cleanup
+	if err == nil || err.Error() != "codexacp: codex app-server exited" {
+		t.Errorf("Serve: %v", err)
+	}
 }
 
 // A session closed mid-turn interrupts its turn before it unsubscribes,

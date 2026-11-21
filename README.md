@@ -201,8 +201,8 @@ Not yet:
 - **Skipping a client's MCP server** that your Codex config already names.
 - **A question's auto-resolution timeout**, and requests for extra sandbox
   permissions (refused).
-- **Recovery after the app-server exits.** The agent quits, and the client
-  sees it go.
+- **Recovery after the app-server exits.** The agent quits, with exit
+  status 1, and the client sees it go.
 - **MCP servers over SSE**, and ACP's own MCP transport.
 - **Windows** is not tested. The module builds there (CI checks that), but
   the tests run on macOS and Linux only.

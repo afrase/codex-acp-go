@@ -19,8 +19,8 @@ import (
 // does: the app-server is stopped; a second signal has its default effect.
 //
 // Main returns nil when the client went or a signal ended the agent, and
-// otherwise what broke the connection (already logged), so that a
-// command can exit with an error.
+// otherwise what ended it (already logged): the app-server's exit, or
+// what broke the connection, so that a command can exit with an error.
 func Main(cfg Config) error {
 	if cfg.Log == nil {
 		cfg.Log = slog.New(slog.NewTextHandler(os.Stderr, nil))

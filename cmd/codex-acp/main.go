@@ -10,8 +10,8 @@
 // stderr. Its own log lines never carry a prompt or a token, but when the
 // app-server fails or exits the last line codex wrote to its stderr is
 // logged as codex wrote it. SIGTERM and SIGINT stop the app-server, as
-// the end of stdin does. It exits with 1 when the connection to the
-// client broke.
+// the end of stdin does. It exits with 1 when the app-server exited on
+// its own or the connection to the client broke.
 package main
 
 import (

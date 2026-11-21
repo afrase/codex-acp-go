@@ -52,8 +52,9 @@ type agent struct {
 	mu       sync.Mutex
 	server   *appserver.Conn
 	proc     appserver.Proc
-	forms    bool // the client answers form elicitations
-	stopping bool // stop has begun: the app-server's exit is the agent's doing
+	forms    bool  // the client answers form elicitations
+	stopping bool  // stop has begun: the app-server's exit is the agent's doing
+	exited   error // the app-server exited on its own: what Serve returns
 	sessions map[string]*session
 	signin   *signIn // the sign-in waiting for its login's end, if any
 	// children is the session each subagent's thread works for, by the
@@ -66,7 +67,8 @@ type agent struct {
 // goes, ctx ends or the app-server exits (the client's connection is then
 // closed: the agent quit); then the app-server is stopped.
 // It returns nil once the client has gone, ctx's error when ctx ended
-// first, and otherwise what broke the connection.
+// first, an error saying so when the app-server exited on its own, and
+// otherwise what broke the connection.
 func Serve(ctx context.Context, r io.Reader, w io.Writer, cfg Config) error {
 	a := &agent{cfg: cfg, log: cfg.Log, grace: interruptGrace, sessions: map[string]*session{}, children: map[string]string{}}
 	if a.log == nil {
@@ -89,6 +91,12 @@ func Serve(ctx context.Context, r io.Reader, w io.Writer, cfg Config) error {
 	a.stop()
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	a.mu.Lock()
+	exited := a.exited
+	a.mu.Unlock()
+	if exited != nil {
+		return exited
 	}
 	if err := errors.Unwrap(conn.Err()); err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("codexacp: the client's connection: %w", err)
@@ -159,6 +167,12 @@ func (a *agent) startServer(ctx context.Context, info *acp.Implementation) error
 		<-server.Done()
 		a.mu.Lock()
 		stopping := a.stopping
+		if !stopping {
+			a.exited = errors.New("codexacp: codex app-server exited")
+			if said := proc.Said(); said != "" {
+				a.exited = fmt.Errorf("codexacp: codex app-server exited (%s)", said)
+			}
+		}
 		a.mu.Unlock()
 		if !stopping {
 			a.log.Warn("codex app-server exited", "said", proc.Said())
