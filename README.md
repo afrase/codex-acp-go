@@ -44,7 +44,7 @@ You need:
   by running `codex` once in a terminal, from your ACP client (see
   [Signing in](#signing-in)), or set it up with a model provider in its
   `config.toml`.
-- Go 1.27.4 or later, to build.
+- Go 1.26 or later, to build.
 
 ```sh
 go install github.com/afrase/codex-acp-go/cmd/codex-acp@latest
