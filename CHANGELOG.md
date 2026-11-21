@@ -2,7 +2,7 @@
 
 All notable changes to this module. It follows [Semantic Versioning](https://semver.org); until 1.0, a minor version may change the API.
 
-## v0.3.3 (unreleased)
+## v0.3.3 (2026-11-21)
 
 No API change.
 
