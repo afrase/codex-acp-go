@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -562,5 +563,55 @@ func TestQueuedPromptAfterClose(t *testing.T) {
 				t.Errorf("%d turns started, want 1", n)
 			}
 		})
+	}
+}
+
+// A prompt withdrawn while turn/start is unanswered ends at once, and the
+// turn Codex then starts is interrupted.
+func TestWithdrawnDuringTurnStart(t *testing.T) {
+	f := codex()
+	release := make(chan struct{})
+	var starts, answered atomic.Int32
+	f.On("turn/start", func(json.RawMessage) (any, error) {
+		if starts.Add(1) == 1 {
+			<-release
+			return map[string]any{"turn": appservertest.TurnOf("turn_1", "inProgress")}, nil
+		}
+		return map[string]any{"turn": appservertest.TurnOf("turn_2", "inProgress")}, nil
+	})
+	f.Then("turn/start", func(json.RawMessage) {
+		if answered.Add(1) == 1 { // turn_2's: turn_1's is answered last
+			f.Notify("turn/completed", map[string]any{"threadId": "thr_1", "turn": appservertest.TurnOf("turn_2", "completed")})
+		}
+	})
+	f.On("turn/interrupt", appservertest.Reply(map[string]any{}))
+	h := initialized(t, f)
+	sid := h.session()
+	ctx, cancel := context.WithCancel(t.Context())
+	withdrawn := make(chan error, 1)
+	go func() {
+		_, err := h.conn.Prompt(ctx, &acp.PromptRequest{SessionID: acp.SessionID(sid), Prompt: []acp.ContentBlock{textBlock("go")}})
+		withdrawn <- err
+	}()
+	if _, err := f.Await(t.Context(), "turn/start", 0); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	if err := <-withdrawn; err == nil {
+		t.Fatal("the withdrawn prompt answered")
+	}
+	// The next prompt starts its turn once the withdrawn one has ended.
+	if resp, err := h.conn.Prompt(t.Context(), &acp.PromptRequest{SessionID: acp.SessionID(sid), Prompt: []acp.ContentBlock{textBlock("go")}}); err != nil || resp.StopReason != acp.StopReasonEndTurn {
+		t.Fatalf("next prompt: %v, %v", resp, err)
+	}
+	close(release)
+	ctx, stop := context.WithTimeout(t.Context(), 5*time.Second) // bounds a hang, orders nothing
+	defer stop()
+	got, err := f.Await(ctx, "turn/interrupt", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != `{"threadId":"thr_1","turnId":"turn_1"}` {
+		t.Errorf("turn/interrupt %s", got)
 	}
 }

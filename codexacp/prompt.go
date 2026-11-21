@@ -118,8 +118,8 @@ func (a *agent) prompt(ctx context.Context, seq uint64, req *acp.PromptRequest) 
 	m, _ := modeByID(st.mode)
 	params := appserver.TurnStartParams{ThreadID: s.id, Input: input, ApprovalPolicy: m.approval, ApprovalsReviewer: m.reviewer,
 		SandboxPolicy: m.sandbox, Model: st.model, Effort: st.effort, Summary: "auto"}
-	var answer json.RawMessage
-	if err := a.call(ctx, "turn/start", params, &answer); err != nil {
+	answer, err := s.startTurn(ctx, t, params)
+	if err != nil {
 		return nil, err
 	}
 	var started appserver.TurnStartResponse
@@ -192,20 +192,56 @@ func (s *session) waitTurn(ctx context.Context, seq uint64) (bool, error) {
 	}
 }
 
-// unreadStart ends a prompt whose turn/start answer doesn't decode: the
-// turn Codex may be running is interrupted (by the id the answer or
-// turn/started gives) and the prompt fails once it has ended, or
-// interruptGrace after.
-func (s *session) unreadStart(ctx context.Context, t *turn, answer json.RawMessage, err error) error {
-	s.a.log.Warn("turn/start's answer doesn't decode: the turn is interrupted", "session", s.id, "err", err)
+// startTurn sends turn/start and gives its answer. A prompt withdrawn
+// before the answer comes doesn't wait for it, but the turn Codex starts
+// is still interrupted: the answer is read on, and gives its id.
+func (s *session) startTurn(ctx context.Context, t *turn, params appserver.TurnStartParams) (json.RawMessage, error) {
+	type result struct {
+		answer json.RawMessage
+		err    error
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	res := make(chan result, 1)
+	go func() {
+		var answer json.RawMessage
+		err := s.a.call(s.a.ctx, "turn/start", params, &answer)
+		res <- result{answer, err}
+	}()
+	select {
+	case r := <-res:
+		return r.answer, r.err
+	case <-ctx.Done():
+	}
+	s.interrupt(t) // marks it cancelled: started interrupts it
+	go func() {
+		if r := <-res; r.err == nil {
+			s.started(t, turnID(r.answer))
+		}
+	}()
+	return nil, ctx.Err()
+}
+
+// turnID is the turn's id in turn/start's answer, "" if it has none.
+func turnID(answer json.RawMessage) string {
 	var id struct {
 		Turn struct {
 			ID string `json:"id"`
 		} `json:"turn"`
 	}
 	_ = json.Unmarshal(answer, &id)
+	return id.Turn.ID
+}
+
+// unreadStart ends a prompt whose turn/start answer doesn't decode: the
+// turn Codex may be running is interrupted (by the id the answer or
+// turn/started gives) and the prompt fails once it has ended, or
+// interruptGrace after.
+func (s *session) unreadStart(ctx context.Context, t *turn, answer json.RawMessage, err error) error {
+	s.a.log.Warn("turn/start's answer doesn't decode: the turn is interrupted", "session", s.id, "err", err)
 	s.interrupt(t)
-	s.started(t, id.Turn.ID)
+	s.started(t, turnID(answer))
 	select {
 	case <-t.ended:
 	case <-t.late:
