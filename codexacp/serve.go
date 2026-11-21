@@ -142,6 +142,12 @@ func (a *agent) startServer(ctx context.Context, info *acp.Implementation) error
 	if err != nil {
 		return fmt.Errorf("start codex app-server: %w", err)
 	}
+	if proc.Kill == nil { // a Spawner's that has no way to stop it, or no stderr
+		proc.Kill = func() {}
+	}
+	if proc.Said == nil {
+		proc.Said = func() string { return "" }
+	}
 	server := appserver.NewConn(proc.Out, proc.In, router{a}, a.log)
 	client := appserver.ClientInfo{Name: Name, Title: "Codex", Version: Version}
 	if info != nil && info.Name != "" {

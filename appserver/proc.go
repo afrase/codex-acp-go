@@ -19,8 +19,8 @@ type Spec struct {
 }
 
 // Proc is a started app-server: its stdin and stdout, a way to stop it
-// (Kill, which waits for its exit), and the last line it wrote to stderr, which says why it stopped when it
-// did.
+// (Kill, which waits for its exit), and the last line it wrote to stderr,
+// which says why it stopped when it did. A nil Kill or Said does nothing.
 type Proc struct {
 	In   io.WriteCloser
 	Out  io.Reader

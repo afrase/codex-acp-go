@@ -9,6 +9,7 @@ import (
 
 	acp "github.com/afrase/acp-go/unstable"
 
+	"github.com/afrase/codex-acp-go/appserver"
 	"github.com/afrase/codex-acp-go/appserver/appservertest"
 )
 
@@ -241,5 +242,28 @@ func TestCloseMidTurn(t *testing.T) {
 	}
 	if r := <-done; r.err != nil || r.resp.StopReason != acp.StopReasonCancelled {
 		t.Errorf("the prompt of a closed session ended %v, %v", r.resp, r.err)
+	}
+}
+
+// A Spawner whose Proc has no Kill or Said still serves, stops and sees
+// the app-server exit.
+func TestSpawnerWithoutKillOrSaid(t *testing.T) {
+	for _, exit := range []bool{false, true} {
+		f := codex()
+		spawn := func(s appserver.Spec) (appserver.Proc, error) {
+			p, err := f.Spawn(s)
+			p.Kill, p.Said = nil, nil
+			return p, err
+		}
+		h := initialized(t, f, func(cfg *Config) { cfg.Spawn = spawn })
+		h.session()
+		if exit {
+			f.Exit()
+			<-h.conn.Done()
+			if err := <-h.done; err == nil {
+				t.Error("Serve didn't say the app-server exited")
+			}
+			h.done <- nil // for the harness's cleanup
+		}
 	}
 }
