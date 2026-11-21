@@ -105,7 +105,7 @@ func TestNewSessionRefused(t *testing.T) {
 
 // Options are the session's: a mode, a model (whose effort stays if it
 // has it), an effort it offers; anything else is refused. Close lets go
-// of the thread.
+// of the thread; a second close is closed already.
 func TestSetOptionsAndClose(t *testing.T) {
 	f := codex()
 	f.On("thread/settings/update", appservertest.Reply(map[string]any{}))
@@ -149,6 +149,12 @@ func TestSetOptionsAndClose(t *testing.T) {
 	}
 	if _, err := set("mode", "agent"); err == nil {
 		t.Error("a closed session took an option")
+	}
+	if _, err := h.conn.CloseSession(t.Context(), &acp.CloseSessionRequest{SessionID: acp.SessionID(sid)}); err != nil {
+		t.Errorf("a second close: %v", err)
+	}
+	if n := len(f.Calls("thread/unsubscribe")); n != 1 {
+		t.Errorf("%d unsubscribes", n)
 	}
 }
 

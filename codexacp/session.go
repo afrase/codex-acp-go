@@ -126,11 +126,21 @@ func (a *agent) NewSession(ctx context.Context, req *acp.NewSessionRequest) (*ac
 	return &acp.NewSessionResponse{SessionID: acp.SessionID(s.id), Modes: s.settings.modeState(), ConfigOptions: s.settings.options()}, nil
 }
 
+// CloseSession closes a session; one that isn't open is closed already.
 func (a *agent) CloseSession(ctx context.Context, req *acp.CloseSessionRequest) (*acp.CloseSessionResponse, error) {
 	s, err := a.session(req.SessionID)
 	if err != nil {
+		return &acp.CloseSessionResponse{}, nil //nolint:nilerr // a session not open is closed already
+	}
+	if err := a.closeSession(ctx, s); err != nil {
 		return nil, err
 	}
+	return &acp.CloseSessionResponse{}, nil
+}
+
+// closeSession closes s: its turn interrupted first, then its thread
+// unsubscribed.
+func (a *agent) closeSession(ctx context.Context, s *session) error {
 	a.mu.Lock()
 	delete(a.sessions, s.id)
 	a.forgetChildren(s.id)
@@ -152,10 +162,7 @@ func (a *agent) CloseSession(ctx context.Context, req *acp.CloseSessionRequest) 
 		t.interruptSent(ctx)
 	}
 	s.end(fmt.Errorf("session %s closed", s.id))
-	if err := a.call(ctx, "thread/unsubscribe", appserver.ThreadID{ThreadID: s.id}, nil); err != nil {
-		return nil, err
-	}
-	return &acp.CloseSessionResponse{}, nil
+	return a.call(ctx, "thread/unsubscribe", appserver.ThreadID{ThreadID: s.id}, nil)
 }
 
 func (a *agent) SetSessionMode(_ context.Context, req *acp.SetSessionModeRequest) (*acp.SetSessionModeResponse, error) {
