@@ -29,22 +29,17 @@ func Main(cfg Config) error {
 	if cfg.CodexPath == "" {
 		cfg.CodexPath = os.Getenv("CODEX_PATH")
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(sigs)
-	go func() {
-		select {
-		case sig := <-sigs:
-			signal.Stop(sigs) // the next one has its default effect
-			log.Info("stopping on a signal", "signal", sig)
-			cancel()
-		case <-ctx.Done():
-		}
-	}()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	signalled := make(chan struct{})
+	defer context.AfterFunc(ctx, func() { // unregistered before stop runs, so a return logs nothing
+		stop() // the next signal has its default effect
+		log.Info("stopping on a signal", "signal", context.Cause(ctx))
+		close(signalled)
+	})()
 	err := Serve(ctx, os.Stdin, os.Stdout, cfg)
 	if ctx.Err() != nil {
+		<-signalled
 		return nil
 	}
 	if err != nil {
