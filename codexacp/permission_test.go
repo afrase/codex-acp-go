@@ -12,23 +12,6 @@ import (
 	"github.com/afrase/codex-acp-go/appserver/appservertest"
 )
 
-// approvalTurn scripts a turn that asks method with params, then keeps
-// Codex's answer in answers and completes.
-func approvalTurn(t *testing.T, f *appservertest.Fake, method string, params map[string]any, answers chan<- string) {
-	t.Helper()
-	f.On("turn/start", appservertest.Reply(map[string]any{"turn": appservertest.TurnOf("turn_1", "inProgress")}))
-	f.Then("turn/start", func(json.RawMessage) {
-		f.Notify("turn/started", map[string]any{"threadId": "thr_1", "turn": appservertest.TurnOf("turn_1", "inProgress")})
-		answer, err := f.Ask(context.Background(), method, params)
-		if err != nil {
-			answers <- err.Error()
-		} else {
-			answers <- string(answer)
-		}
-		f.Notify("turn/completed", map[string]any{"threadId": "thr_1", "turn": appservertest.TurnOf("turn_1", "completed")})
-	})
-}
-
 func pick(id string) func(*acp.RequestPermissionRequest) (*acp.RequestPermissionResponse, error) {
 	return func(*acp.RequestPermissionRequest) (*acp.RequestPermissionResponse, error) {
 		return &acp.RequestPermissionResponse{Outcome: acp.RequestPermissionOutcome{Outcome: "selected",
@@ -42,7 +25,7 @@ func pick(id string) func(*acp.RequestPermissionRequest) (*acp.RequestPermission
 func TestCommandApproval(t *testing.T) {
 	f := codex()
 	answers := make(chan string, 1)
-	approvalTurn(t, f, "item/commandExecution/requestApproval", map[string]any{
+	askTurn(f, "item/commandExecution/requestApproval", map[string]any{
 		"threadId": "thr_1", "turnId": "turn_1", "itemId": "call_1", "startedAtMs": 1, "environmentId": nil, "kind": "command",
 		"command": "/bin/zsh -lc 'npm test'", "cwd": "/w/proj", "reason": "needs the network",
 		"commandActions":              []any{map[string]any{"type": "unknown", "command": "npm test"}},
@@ -51,9 +34,7 @@ func TestCommandApproval(t *testing.T) {
 	h := initialized(t, f)
 	h.c.permit = pick("accept_execpolicy_amendment")
 	sid := h.session()
-	if _, err := h.conn.Prompt(t.Context(), &acp.PromptRequest{SessionID: acp.SessionID(sid), Prompt: []acp.ContentBlock{textBlock("test")}}); err != nil {
-		t.Fatal(err)
-	}
+	h.prompt(sid, "test")
 	if got := <-answers; got != `{"decision":{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["npm","test"]}}}` {
 		t.Errorf("Codex was answered %s", got)
 	}

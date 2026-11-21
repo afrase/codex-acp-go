@@ -86,9 +86,7 @@ func TestSubagentOfClosedSession(t *testing.T) {
 	h := initialized(t, f)
 	h.c.permit = pick("allow_once")
 	sid := h.session()
-	if _, err := h.conn.Prompt(t.Context(), &acp.PromptRequest{SessionID: acp.SessionID(sid), Prompt: []acp.ContentBlock{textBlock("go")}}); err != nil {
-		t.Fatal(err)
-	}
+	h.prompt(sid, "go")
 	approval := map[string]any{"threadId": "thr_child", "turnId": "turn_c", "itemId": "call_c1", "reason": nil}
 	if got, err := f.Ask(t.Context(), "item/fileChange/requestApproval", approval); err != nil || string(got) != `{"decision":"accept"}` {
 		t.Errorf("open session: %s, %v", got, err)

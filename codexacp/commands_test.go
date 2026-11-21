@@ -3,8 +3,6 @@ package codexacp
 import (
 	"testing"
 
-	acp "github.com/afrase/acp-go/unstable"
-
 	"github.com/afrase/codex-acp-go/appserver/appservertest"
 )
 
@@ -26,9 +24,7 @@ func TestCommands(t *testing.T) {
 	if got := string(f.Calls("skills/list")[0]); got != `{"cwds":["/w/proj"]}` {
 		t.Errorf("skills/list %s", got)
 	}
-	if _, err := h.conn.Prompt(t.Context(), &acp.PromptRequest{SessionID: acp.SessionID(sid), Prompt: []acp.ContentBlock{textBlock("go")}}); err != nil {
-		t.Fatal(err)
-	}
+	h.prompt(sid, "go")
 	if got := h.updates(); got != want+"\n"+`{"sessionUpdate":"session_info_update","title":"go"}` {
 		t.Errorf("after the turn: %s", got)
 	}

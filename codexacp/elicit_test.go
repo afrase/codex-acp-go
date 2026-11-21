@@ -1,40 +1,10 @@
 package codexacp
 
 import (
-	"context"
-	"encoding/json"
 	"testing"
 
 	acp "github.com/afrase/acp-go/unstable"
-
-	"github.com/afrase/codex-acp-go/appserver/appservertest"
 )
-
-// askTurn scripts a turn that sends notes, asks method with params, keeps
-// Codex's answer in answers, and completes.
-func askTurn(f *appservertest.Fake, method string, params map[string]any, answers chan<- string, notes ...note) {
-	f.On("turn/start", appservertest.Reply(map[string]any{"turn": appservertest.TurnOf("turn_1", "inProgress")}))
-	f.Then("turn/start", func(json.RawMessage) {
-		f.Notify("turn/started", map[string]any{"threadId": "thr_1", "turn": appservertest.TurnOf("turn_1", "inProgress")})
-		for _, n := range notes {
-			f.Notify(n.Method, n.Params)
-		}
-		answer, err := f.Ask(context.Background(), method, params)
-		if err != nil {
-			answers <- err.Error()
-		} else {
-			answers <- string(answer)
-		}
-		f.Notify("turn/completed", map[string]any{"threadId": "thr_1", "turn": appservertest.TurnOf("turn_1", "completed")})
-	})
-}
-
-func promptGo(t *testing.T, h *harness, sid string) {
-	t.Helper()
-	if _, err := h.conn.Prompt(t.Context(), &acp.PromptRequest{SessionID: acp.SessionID(sid), Prompt: []acp.ContentBlock{textBlock("go")}}); err != nil {
-		t.Fatal(err)
-	}
-}
 
 func accept(content map[string]any) func(*acp.CreateElicitationRequest) (*acp.CreateElicitationResponse, error) {
 	return func(*acp.CreateElicitationRequest) (*acp.CreateElicitationResponse, error) {
@@ -62,7 +32,7 @@ func TestQuestions(t *testing.T) {
 	h := initialized(t, f)
 	h.c.elicit = accept(map[string]any{"color": "None of the above", "color_note": " teal ", "name": "Bob"})
 	sid := h.session()
-	promptGo(t, h, sid)
+	h.prompt(sid, "go")
 	if got := <-answers; got != `{"answers":{"color":{"answers":["None of the above","user_note: teal"]},"name":{"answers":["Bob"]}}}` {
 		t.Errorf("Codex was answered %s", got)
 	}
@@ -91,7 +61,7 @@ func TestMCPToolApproval(t *testing.T) {
 	h := initialized(t, f)
 	h.c.permit = pick("allow_session")
 	sid := h.session()
-	promptGo(t, h, sid)
+	h.prompt(sid, "go")
 	if got := <-answers; got != `{"_meta":{"persist":"session"},"action":"accept","content":null}` {
 		t.Errorf("Codex was answered %s", got)
 	}
@@ -118,7 +88,7 @@ func TestMCPForm(t *testing.T) {
 	h := initialized(t, f)
 	h.c.elicit = accept(map[string]any{"env": "dev"})
 	sid := h.session()
-	promptGo(t, h, sid)
+	h.prompt(sid, "go")
 	if got := <-answers; got != `{"_meta":null,"action":"accept","content":{"env":"dev"}}` {
 		t.Errorf("Codex was answered %s", got)
 	}
@@ -138,7 +108,7 @@ func TestQuestionsWithoutForms(t *testing.T) {
 		t.Fatal(err)
 	}
 	sid := h.session()
-	promptGo(t, h, sid)
+	h.prompt(sid, "go")
 	if got := <-answers; got != `{"answers":{}}` {
 		t.Errorf("Codex was answered %s", got)
 	}

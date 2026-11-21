@@ -63,10 +63,7 @@ func TestPrompt(t *testing.T) {
 	}
 	set("mode", "agent-full-access")
 	set("reasoning_effort", "low")
-	resp, err := h.conn.Prompt(t.Context(), &acp.PromptRequest{SessionID: acp.SessionID(sid), Prompt: []acp.ContentBlock{textBlock("hi")}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	resp := h.prompt(sid, "hi")
 	want := `{"threadId":"thr_1","input":[{"type":"text","text":"hi","text_elements":[]}],"approvalPolicy":"never","approvalsReviewer":"user",` +
 		`"sandboxPolicy":{"type":"dangerFullAccess"},"model":"fake-model-1","effort":"low","summary":"auto"}`
 	if got := string(f.Calls("turn/start")[0]); got != want {
@@ -95,19 +92,12 @@ func TestSecondTurnUsage(t *testing.T) {
 	f := codex()
 	h := initialized(t, f)
 	sid := h.session()
-	prompt := func() *acp.PromptResponse {
-		resp, err := h.conn.Prompt(t.Context(), &acp.PromptRequest{SessionID: acp.SessionID(sid), Prompt: []acp.ContentBlock{textBlock("go")}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return resp
-	}
 	f.Turn("turn_1", "completed", usageNote(map[string]int{"total": 100, "input": 80, "output": 20}, map[string]int{"total": 100, "input": 80, "output": 20}, nil))
-	prompt()
+	h.prompt(sid, "go")
 	f.Turn("turn_1", "completed",
 		itemNote("item/completed", map[string]any{"type": "reasoning", "id": "rs_2", "summary": []string{"One", "", "Two"}, "content": []string{}}),
 		usageNote(map[string]int{"total": 130, "input": 100, "output": 30}, map[string]int{"total": 30, "input": 20, "output": 10}, nil))
-	if u := prompt().Usage; u.TotalTokens != 30 || u.InputTokens != 20 || u.OutputTokens != 10 {
+	if u := h.prompt(sid, "go").Usage; u.TotalTokens != 30 || u.InputTokens != 20 || u.OutputTokens != 10 {
 		t.Errorf("second turn's usage %s", jsonOf(t, u))
 	}
 	if got := h.updates(); got != `{"sessionUpdate":"session_info_update","title":"go"}`+"\n"+`{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"One\n\nTwo"},"messageId":"rs_2"}` {
@@ -203,9 +193,7 @@ func TestWarnings(t *testing.T) {
 		note{Method: "configWarning", Params: map[string]any{"summary": "Bad key", "details": "line 3"}})
 	h := initialized(t, f)
 	sid := h.session()
-	if _, err := h.conn.Prompt(context.Background(), &acp.PromptRequest{SessionID: acp.SessionID(sid), Prompt: []acp.ContentBlock{textBlock("go")}}); err != nil {
-		t.Fatal(err)
-	}
+	h.prompt(sid, "go")
 	want := `{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Warning: Careful\n\n"}}` + "\n" +
 		`{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Config warning: Bad key\n\nline 3\n\n"}}` + "\n" +
 		`{"sessionUpdate":"session_info_update","title":"go"}`

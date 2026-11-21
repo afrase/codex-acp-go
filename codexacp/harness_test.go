@@ -231,13 +231,19 @@ func start(t *testing.T, fake *appservertest.Fake, with ...func(*Config)) *harne
 func initialized(t *testing.T, fake *appservertest.Fake, with ...func(*Config)) *harness {
 	t.Helper()
 	h := start(t, fake, with...)
-	_, err := h.conn.Initialize(t.Context(), &acp.InitializeRequest{ProtocolVersion: acp.LatestProtocolVersion,
-		ClientCapabilities: &acp.ClientCapabilities{Elicitation: &acp.ElicitationCapabilities{Form: &acp.ElicitationFormCapabilities{}}},
-		ClientInfo:         &acp.Implementation{Name: "testclient", Title: "Test Client"}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	h.initialize(&acp.Implementation{Name: "testclient", Title: "Test Client"})
 	return h
+}
+
+// initialize initializes the agent as the client info, taking forms.
+func (h *harness) initialize(info *acp.Implementation) {
+	h.t.Helper()
+	_, err := h.conn.Initialize(h.t.Context(), &acp.InitializeRequest{ProtocolVersion: acp.LatestProtocolVersion,
+		ClientCapabilities: &acp.ClientCapabilities{Elicitation: &acp.ElicitationCapabilities{Form: &acp.ElicitationFormCapabilities{}}},
+		ClientInfo:         info})
+	if err != nil {
+		h.t.Fatal(err)
+	}
 }
 
 // session opens a session in /w/proj on a scripted Codex.
@@ -257,43 +263,77 @@ func (h *harness) updates() string {
 	return strings.Join(h.c.updates, "\n")
 }
 
-// waitUpdates waits until there are n updates, and gives them.
-func (h *harness) waitUpdates(n int) string {
-	h.t.Helper()
-	deadline := time.After(5 * time.Second) // bounds a hang, orders nothing
+// until waits up to d for ok, run on the client under its lock, to
+// hold; it is false if ok never did.
+func (h *harness) until(d time.Duration, ok func(*client) bool) bool {
+	deadline := time.After(d) // bounds a hang, orders nothing
 	for {
 		h.c.mu.Lock()
-		got := len(h.c.updates)
+		done := ok(h.c)
 		h.c.mu.Unlock()
-		if got >= n {
-			return h.updates()
+		if done {
+			return true
 		}
 		select {
 		case <-h.c.more:
 		case <-deadline:
-			h.t.Fatalf("%d updates, want %d:\n%s", got, n, h.updates())
+			return false
 		}
 	}
+}
+
+// waitUpdates waits until there are n updates, and gives them.
+func (h *harness) waitUpdates(n int) string {
+	h.t.Helper()
+	var got int
+	if !h.until(5*time.Second, func(c *client) bool { got = len(c.updates); return got >= n }) {
+		h.t.Fatalf("%d updates, want %d:\n%s", got, n, h.updates())
+	}
+	return h.updates()
 }
 
 // waitAsked waits for the client's nth permission request (from 1).
 func (h *harness) waitAsked(n int) *acp.RequestPermissionRequest {
 	h.t.Helper()
-	deadline := time.After(5 * time.Second) // bounds a hang, orders nothing
-	for {
-		h.c.mu.Lock()
-		if len(h.c.asked) >= n {
-			r := h.c.asked[n-1]
-			h.c.mu.Unlock()
-			return r
+	var r *acp.RequestPermissionRequest
+	if !h.until(5*time.Second, func(c *client) bool {
+		if len(c.asked) >= n {
+			r = c.asked[n-1]
 		}
-		h.c.mu.Unlock()
-		select {
-		case <-h.c.more:
-		case <-deadline:
-			h.t.Fatalf("no permission request %d", n)
-		}
+		return r != nil
+	}) {
+		h.t.Fatalf("no permission request %d", n)
 	}
+	return r
+}
+
+// prompt prompts sid with text, or the test fails.
+func (h *harness) prompt(sid, text string) *acp.PromptResponse {
+	h.t.Helper()
+	resp, err := h.conn.Prompt(h.t.Context(), &acp.PromptRequest{SessionID: acp.SessionID(sid), Prompt: []acp.ContentBlock{textBlock(text)}})
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	return resp
+}
+
+// askTurn scripts a turn that sends notes, asks method with params, keeps
+// Codex's answer in answers, and completes.
+func askTurn(f *appservertest.Fake, method string, params map[string]any, answers chan<- string, notes ...note) {
+	f.On("turn/start", appservertest.Reply(map[string]any{"turn": appservertest.TurnOf("turn_1", "inProgress")}))
+	f.Then("turn/start", func(json.RawMessage) {
+		f.Notify("turn/started", map[string]any{"threadId": "thr_1", "turn": appservertest.TurnOf("turn_1", "inProgress")})
+		for _, n := range notes {
+			f.Notify(n.Method, n.Params)
+		}
+		answer, err := f.Ask(context.Background(), method, params)
+		if err != nil {
+			answers <- err.Error()
+		} else {
+			answers <- string(answer)
+		}
+		f.Notify("turn/completed", map[string]any{"threadId": "thr_1", "turn": appservertest.TurnOf("turn_1", "completed")})
+	})
 }
 
 // codex is a fake scripted as a signed-in Codex.

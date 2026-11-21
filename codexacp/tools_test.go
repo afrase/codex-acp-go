@@ -3,8 +3,6 @@ package codexacp
 import (
 	"strings"
 	"testing"
-
-	acp "github.com/afrase/acp-go/unstable"
 )
 
 // runTurn has the fake's turn send notes, prompts, and gives the updates.
@@ -14,9 +12,7 @@ func runTurn(t *testing.T, notes ...note) string {
 	f.Turn("turn_1", "completed", notes...)
 	h := initialized(t, f)
 	sid := h.session()
-	if _, err := h.conn.Prompt(t.Context(), &acp.PromptRequest{SessionID: acp.SessionID(sid), Prompt: []acp.ContentBlock{textBlock("go")}}); err != nil {
-		t.Fatal(err)
-	}
+	h.prompt(sid, "go")
 	got, ok := strings.CutSuffix(h.updates(), "\n"+`{"sessionUpdate":"session_info_update","title":"go"}`)
 	if !ok {
 		t.Errorf("no title after the turn:\n%s", got)

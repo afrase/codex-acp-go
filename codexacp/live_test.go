@@ -77,30 +77,13 @@ func liveStart(t *testing.T) *lived {
 	return l
 }
 
+// serveLive serves the agent as cfg says, every line the client gets
+// logged in wire, and initializes it as the live test's client.
 func serveLive(t *testing.T, cfg Config, wire *wireLog) *harness {
 	t.Helper()
-	toAgentR, toAgentW := io.Pipe()
-	fromAgentR, fromAgentW := io.Pipe()
-	h := &harness{t: t, c: &client{more: make(chan struct{}, 1)}, done: make(chan error, 1)}
-	h.c.log = wire.line
-	go func() {
-		h.done <- Serve(context.Background(), toAgentR, fromAgentW, cfg)
-		_ = fromAgentW.Close()
-	}()
-	h.conn = acp.NewAgentConn(fromAgentR, toAgentW, func(*acp.AgentConn) acp.Client { return h.c })
-	h.close = func() { _ = toAgentW.Close() }
-	t.Cleanup(func() {
-		h.close()
-		if err := <-h.done; err != nil {
-			t.Errorf("Serve: %v", err)
-		}
-	})
-	_, err := h.conn.Initialize(t.Context(), &acp.InitializeRequest{ProtocolVersion: acp.LatestProtocolVersion,
-		ClientCapabilities: &acp.ClientCapabilities{Elicitation: &acp.ElicitationCapabilities{Form: &acp.ElicitationFormCapabilities{}}},
-		ClientInfo:         &acp.Implementation{Name: "codexacp-live-test", Title: "codexacp live test"}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	h := start(t, nil, func(c *Config) { *c = cfg })
+	h.c.log = wire.line // before Initialize, so the wire has it all
+	h.initialize(&acp.Implementation{Name: "codexacp-live-test", Title: "codexacp live test"})
 	return h
 }
 
@@ -310,16 +293,8 @@ func (l *lived) promptAsync(sid, text string) <-chan *acp.PromptResponse {
 // waitFor waits until an update has want in its JSON.
 func (l *lived) waitFor(want string) {
 	l.t.Helper()
-	deadline := time.After(2 * time.Minute)
-	for {
-		if strings.Contains(l.updates(), want) {
-			return
-		}
-		select {
-		case <-l.c.more:
-		case <-deadline:
-			l.t.Fatalf("no update with %s", want)
-		}
+	if !l.until(2*time.Minute, func(c *client) bool { return strings.Contains(strings.Join(c.updates, "\n"), want) }) {
+		l.t.Fatalf("no update with %s", want)
 	}
 }
 
@@ -491,19 +466,8 @@ func TestLiveQuestionWithdrawn(t *testing.T) {
 // waitForm waits for the client's first form.
 func (l *lived) waitForm() {
 	l.t.Helper()
-	deadline := time.After(2 * time.Minute)
-	for {
-		l.c.mu.Lock()
-		n := len(l.c.forms)
-		l.c.mu.Unlock()
-		if n > 0 {
-			return
-		}
-		select {
-		case <-l.c.more:
-		case <-deadline:
-			l.t.Fatal("no form asked")
-		}
+	if !l.until(2*time.Minute, func(c *client) bool { return len(c.forms) > 0 }) {
+		l.t.Fatal("no form asked")
 	}
 }
 
