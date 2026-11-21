@@ -225,3 +225,25 @@ func jsonOf(t *testing.T, v any) string {
 	}
 	return string(b)
 }
+
+// A call whose server doesn't read its stdin gives up when its ctx ends,
+// as does a call queued behind it.
+func TestCallGivesUpOnAServerThatDoesNotRead(t *testing.T) {
+	c, _ := connect(t, newRecorder()) // the server's lines are never read
+	ctx, cancel := context.WithCancel(t.Context())
+	errs := make(chan error, 2)
+	for range 2 {
+		go func() { errs <- c.Call(ctx, "thread/start", map[string]any{}, nil) }()
+	}
+	cancel()
+	for range 2 {
+		select {
+		case err := <-errs:
+			if !errors.Is(err, context.Canceled) {
+				t.Errorf("call: %v", err)
+			}
+		case <-time.After(5 * time.Second): // bounds a hang, orders nothing
+			t.Fatal("a call still waits on its write")
+		}
+	}
+}

@@ -93,8 +93,8 @@ type Conn struct {
 	h   Handler
 	log *slog.Logger
 
-	wmu sync.Mutex
-	w   io.Writer
+	w      io.Writer
+	writes chan writeReq // to the writing goroutine, which alone writes w
 
 	mu     sync.Mutex
 	next   int64
@@ -114,9 +114,10 @@ func NewConn(r io.Reader, w io.Writer, h Handler, log *slog.Logger) *Conn {
 		log = slog.New(slog.DiscardHandler)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	c := &Conn{h: h, log: log, w: w, calls: map[string]chan message{}, done: make(chan struct{}),
+	c := &Conn{h: h, log: log, w: w, writes: make(chan writeReq), calls: map[string]chan message{}, done: make(chan struct{}),
 		ctx: ctx, cancel: cancel, work: make(chan func(), 1)}
 	q := &queue{}
+	go c.writeLoop()
 	go c.read(r, q)
 	go q.run(c.work)
 	go c.handle()
@@ -145,7 +146,7 @@ func (c *Conn) Call(ctx context.Context, method string, params, result any) erro
 	if err != nil {
 		return fmt.Errorf("%s: %w", method, err)
 	}
-	if err := c.write(message{ID: json.RawMessage(id), Method: method, Params: p}); err != nil {
+	if err := c.write(ctx, message{ID: json.RawMessage(id), Method: method, Params: p}); err != nil {
 		return fmt.Errorf("%s: %w", method, err)
 	}
 	select {
@@ -175,7 +176,7 @@ func (c *Conn) Notify(method string, params any) error {
 	if err != nil {
 		return err
 	}
-	return c.write(message{Method: method, Params: p})
+	return c.write(c.ctx, message{Method: method, Params: p})
 }
 
 // Done is closed once the connection has ended: the server's stdout
@@ -215,20 +216,55 @@ func (c *Conn) end(cause error) {
 	close(c.done)
 }
 
-func (c *Conn) write(v any) error {
+// writeReq is a line for the writing goroutine, and where it says how
+// the write went.
+type writeReq struct {
+	line []byte
+	done chan error // buffered: the writer never waits on it
+}
+
+// write has v written as a line, after the lines before it, unless ctx
+// ends or the connection does first. The writing goroutine alone writes,
+// so a caller whose ctx ends while the server doesn't read returns at
+// once; its line may still be written.
+func (c *Conn) write(ctx context.Context, v any) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}
-	c.wmu.Lock()
-	defer c.wmu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	req := writeReq{line: append(b, '\n'), done: make(chan error, 1)}
 	select {
+	case c.writes <- req:
+	case <-ctx.Done():
+		return ctx.Err()
 	case <-c.done:
 		return c.Err()
-	default:
 	}
-	_, err = c.w.Write(append(b, '\n'))
-	return err
+	select {
+	case err := <-req.done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-c.done:
+		return c.Err()
+	}
+}
+
+// writeLoop writes the lines handed to it, one at a time, until the
+// connection ends.
+func (c *Conn) writeLoop() {
+	for {
+		select {
+		case req := <-c.writes:
+			_, err := c.w.Write(req.line)
+			req.done <- err
+		case <-c.done:
+			return
+		}
+	}
 }
 
 // read reads lines until r ends, answering responses at once and queueing
@@ -285,9 +321,9 @@ func (c *Conn) answer(m message) {
 		if !ok {
 			e = &Error{Code: CodeInternal, Message: err.Error()}
 		}
-		werr = c.write(failure{ID: m.ID, Error: e})
+		werr = c.write(c.ctx, failure{ID: m.ID, Error: e})
 	} else {
-		werr = c.write(answer{ID: m.ID, Result: result})
+		werr = c.write(c.ctx, answer{ID: m.ID, Result: result})
 	}
 	if werr != nil {
 		c.log.Debug("app-server request not answered", "method", m.Method, "err", werr)
