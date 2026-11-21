@@ -1,8 +1,12 @@
 package codexacp
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	acp "github.com/afrase/acp-go/unstable"
 
@@ -93,5 +97,52 @@ func TestList(t *testing.T) {
 	}
 	if got := string(f.Calls("thread/list")[0]); got != `{"cursor":"c1","sourceKinds":["cli","vscode","exec","appServer","unknown"],"useStateDbOnly":true}` {
 		t.Errorf("thread/list %s", got)
+	}
+}
+
+// Deleting an open session closes it first: its turn is interrupted, its
+// prompt ends cancelled, and its thread is unsubscribed, then archived.
+func TestDeleteOpenSession(t *testing.T) {
+	f := codex()
+	f.Turn("turn_1", "", appservertest.Note{Method: "item/agentMessage/delta",
+		Params: map[string]any{"threadId": "thr_1", "turnId": "turn_1", "itemId": "msg_1", "delta": "Hi"}})
+	f.On("turn/interrupt", appservertest.Reply(map[string]any{}))
+	f.Then("turn/interrupt", func(json.RawMessage) {
+		f.Notify("turn/completed", map[string]any{"threadId": "thr_1", "turn": appservertest.TurnOf("turn_1", "interrupted")})
+	})
+	f.On("thread/archive", appservertest.Reply(map[string]any{}))
+	h := initialized(t, f)
+	sid := h.session()
+	done := make(chan *acp.PromptResponse, 1)
+	go func() {
+		resp, err := h.conn.Prompt(context.Background(), &acp.PromptRequest{SessionID: acp.SessionID(sid), Prompt: []acp.ContentBlock{textBlock("go")}})
+		if err != nil {
+			t.Error(err)
+		}
+		done <- resp
+	}()
+	h.waitUpdates(1) // the turn runs
+	if _, err := h.conn.DeleteSession(t.Context(), &acp.DeleteSessionRequest{SessionID: acp.SessionID(sid)}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case resp := <-done:
+		if resp == nil || resp.StopReason != acp.StopReasonCancelled {
+			t.Errorf("prompt %v", resp)
+		}
+	case <-time.After(5 * time.Second): // bounds a hang, orders nothing
+		t.Fatal("the deleted session's prompt didn't end")
+	}
+	var order []string
+	for _, c := range f.All() {
+		if c.Method == "turn/interrupt" || c.Method == "thread/unsubscribe" || c.Method == "thread/archive" {
+			order = append(order, c.Method)
+		}
+	}
+	if got := strings.Join(order, " "); got != "turn/interrupt thread/unsubscribe thread/archive" {
+		t.Errorf("calls %s", got)
+	}
+	if _, err := h.conn.SetSessionMode(t.Context(), &acp.SetSessionModeRequest{SessionID: acp.SessionID(sid), ModeID: "read-only"}); err == nil {
+		t.Error("a deleted session is still open")
 	}
 }

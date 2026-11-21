@@ -110,9 +110,14 @@ func (a *agent) turnsOf(ctx context.Context, thread string) (map[string]string, 
 }
 
 // DeleteSession archives the thread, as codex-acp's delete does (`codex
-// resume` offers to unarchive it); a thread Codex doesn't know is deleted
-// already.
+// resume` offers to unarchive it), closing its session first if it is
+// open; a thread Codex doesn't know is deleted already.
 func (a *agent) DeleteSession(ctx context.Context, req *acp.DeleteSessionRequest) (*acp.DeleteSessionResponse, error) {
+	if s, err := a.session(req.SessionID); err == nil {
+		if err := a.closeSession(ctx, s); err != nil {
+			return nil, err
+		}
+	}
 	err := a.call(ctx, "thread/archive", appserver.ThreadID{ThreadID: string(req.SessionID)}, nil)
 	if d := errorDetails(err); err != nil && !unknownThread(d) {
 		return nil, err
