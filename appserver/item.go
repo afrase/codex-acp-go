@@ -101,9 +101,9 @@ func unmarshalSet(b json.RawMessage, v any) error {
 }
 
 // DecodeItem decodes an item as a message carries it. When it doesn't
-// decode (a field of a type this package doesn't expect), the error says
-// why, and the Item has the Type and ID that could be read, for a log
-// line or a lookup by id.
+// decode (a field of a type this package doesn't expect), the error names
+// the item's kind and id and says why, and the Item has the Type and ID
+// that could be read, for a log line or a lookup by id.
 func DecodeItem(b json.RawMessage) (Item, error) {
 	var it Item
 	err := json.Unmarshal(b, &it)
@@ -118,7 +118,7 @@ func DecodeItem(b json.RawMessage) (Item, error) {
 	partial := Item{Raw: append(json.RawMessage(nil), b...)}
 	_ = json.Unmarshal(id.Type, &partial.Type)
 	_ = json.Unmarshal(id.ID, &partial.ID)
-	return partial, fmt.Errorf("item %q: %w", partial.Type, err)
+	return partial, fmt.Errorf("item %q %q: %w", partial.Type, partial.ID, err)
 }
 
 // CommandAction is what Codex makes of a command: a read, a file

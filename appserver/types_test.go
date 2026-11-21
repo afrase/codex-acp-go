@@ -2,6 +2,7 @@ package appserver
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -49,6 +50,9 @@ func TestDecodeItem(t *testing.T) {
 	it, err := DecodeItem(n.Item)
 	if err == nil || it.Type != "commandExecution" || it.ID != "call_1" {
 		t.Errorf("decoded %+v, %v", it, err)
+	}
+	if err != nil && !strings.HasPrefix(err.Error(), `item "commandExecution" "call_1": `) {
+		t.Errorf("error %v: it names the item's kind and id", err)
 	}
 	if _, err := DecodeItem(json.RawMessage(`{"type":"userMessage","id":"u1","content":"hi"}`)); err == nil {
 		t.Error("a userMessage whose content isn't a list decoded")
